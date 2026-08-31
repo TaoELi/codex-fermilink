@@ -180,7 +180,7 @@ jobs:
             # (codex-fermilink-<platform>.tgz).
             platform="$(basename "$tarball" .tgz)"
             platform="${platform#codex-fermilink-}"
-            npm publish --access public --tag "$platform" "$tarball"
+            npm publish --access public --tag "$platform" "./$tarball"
           done
       - name: Stage and publish launcher package
         shell: bash
@@ -193,4 +193,4 @@ jobs:
             --release-version "${{ steps.versions.outputs.fork }}" \
             --staging-dir launcher-staging \
             --pack-output codex-fermilink-launcher.tgz
-          npm publish --access public --tag latest codex-fermilink-launcher.tgz
+          npm publish --access public --tag latest ./codex-fermilink-launcher.tgz
