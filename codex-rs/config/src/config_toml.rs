@@ -245,6 +245,14 @@ pub struct ConfigToml {
     /// sanctioned by Codex will likely degrade model performance.
     pub model_instructions_file: Option<AbsolutePathBuf>,
 
+    /// Agent profile applied to newly created threads (fermilink fork).
+    /// `"default"` (or unset) keeps the shipped Codex instructions; the
+    /// scientific profiles (`"scientific-algorithm"`,
+    /// `"scientific-simulations"`, `"scientific-measurements"`) replace them
+    /// with built-in research prompts and bundle subagent roles. The legacy
+    /// `agent_mode` key is migrated via the config key-alias table.
+    pub agent_profile: Option<String>,
+
     /// Compact prompt used for history compaction.
     pub compact_prompt: Option<String>,
 

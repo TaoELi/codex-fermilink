@@ -3247,6 +3247,16 @@ async fn personality_selection_popup_snapshot() {
 }
 
 #[tokio::test]
+async fn agent_profile_selection_popup_snapshot() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
+    chat.thread_id = Some(ThreadId::new());
+    chat.open_agent_profile_popup();
+
+    let popup = render_bottom_popup(&chat, /*width*/ 80);
+    assert_chatwidget_snapshot!("agent_profile_selection_popup", popup);
+}
+
+#[tokio::test]
 async fn skills_menu_default_mentions_shortcut_snapshot() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.open_skills_menu();

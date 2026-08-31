@@ -142,7 +142,11 @@ pub(crate) fn new_session_info(
     .with_yolo_mode(has_yolo_permissions(
         session.approval_policy,
         &session.permission_profile,
-    ));
+    ))
+    .with_agent_profile(
+        (config.agent_profile != codex_agent_profiles::DEFAULT_AGENT_PROFILE_ID)
+            .then(|| config.agent_profile.clone()),
+    );
     let mut parts: Vec<Box<dyn HistoryCell>> = vec![Box::new(header)];
 
     if is_first_event {
@@ -231,6 +235,8 @@ pub(crate) struct SessionHeaderHistoryCell {
     show_fast_status: bool,
     directory: PathBuf,
     yolo_mode: bool,
+    /// Non-default agent profile identifier (fermilink fork).
+    agent_profile: Option<String>,
 }
 
 impl SessionHeaderHistoryCell {
@@ -267,11 +273,18 @@ impl SessionHeaderHistoryCell {
             show_fast_status,
             directory,
             yolo_mode: false,
+            agent_profile: None,
         }
     }
 
     pub(crate) fn with_yolo_mode(mut self, yolo_mode: bool) -> Self {
         self.yolo_mode = yolo_mode;
+        self
+    }
+
+    /// Shows a `profile:` row for a non-default agent profile.
+    pub(crate) fn with_agent_profile(mut self, agent_profile: Option<String>) -> Self {
+        self.agent_profile = agent_profile;
         self
     }
 
@@ -371,8 +384,24 @@ impl HistoryCell for SessionHeaderHistoryCell {
             make_row(title_spans),
             make_row(Vec::new()),
             make_row(model_spans),
-            make_row(dir_spans),
         ];
+
+        if let Some(agent_profile) = self.agent_profile.as_ref() {
+            let profile_label = format!(
+                "{profile_label:<label_width$}",
+                profile_label = "profile:",
+                label_width = label_width
+            );
+            lines.push(make_row(vec![
+                Span::from(format!("{profile_label} ")).dim(),
+                Span::from(agent_profile.clone()),
+                "   ".dim(),
+                "/profile".cyan(),
+                " to change".dim(),
+            ]));
+        }
+
+        lines.push(make_row(dir_spans));
 
         if self.yolo_mode {
             let permissions_label = format!("{PERMISSIONS_LABEL:<label_width$}");
@@ -399,11 +428,14 @@ impl HistoryCell for SessionHeaderHistoryCell {
                     .map(|reasoning| format!(" {reasoning}"))
                     .unwrap_or_default()
             )),
-            Line::from(format!(
-                "directory: {}",
-                self.format_directory(/*max_width*/ None)
-            )),
         ];
+        if let Some(agent_profile) = self.agent_profile.as_ref() {
+            lines.push(Line::from(format!("profile: {agent_profile}")));
+        }
+        lines.push(Line::from(format!(
+            "directory: {}",
+            self.format_directory(/*max_width*/ None)
+        )));
         if self.yolo_mode {
             lines.push(Line::from("permissions: YOLO mode"));
         }

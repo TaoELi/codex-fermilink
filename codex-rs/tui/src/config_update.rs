@@ -88,6 +88,16 @@ pub(crate) fn build_model_selection_edits(
     ]
 }
 
+pub(crate) fn build_agent_profile_selection_edits(id: &str) -> Vec<ConfigEdit> {
+    let edit = if id == codex_agent_profiles::DEFAULT_AGENT_PROFILE_ID {
+        clear_config_value("agent_profile")
+    } else {
+        replace_config_value("agent_profile", serde_json::json!(id))
+    };
+    // Retire the legacy `/mode` era key so a file never carries both.
+    vec![edit, clear_config_value("agent_mode")]
+}
+
 pub(crate) fn build_service_tier_selection_edits(service_tier: Option<&str>) -> Vec<ConfigEdit> {
     let service_tier_edit = service_tier.map_or_else(
         || clear_config_value("service_tier"),

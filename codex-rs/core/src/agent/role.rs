@@ -26,6 +26,7 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::LazyLock;
 use toml::Value as TomlValue;
 
@@ -169,6 +170,7 @@ pub(crate) fn resolve_role_config<'a>(
     config
         .agent_roles
         .get(role_name)
+        .or_else(|| built_in::profile_configs(&config.agent_profile).get(role_name))
         .or_else(|| built_in::configs().get(role_name))
 }
 
@@ -266,20 +268,51 @@ mod role_overrides {
 pub(crate) mod spawn_tool_spec {
     use super::*;
 
-    /// Builds the spawn-agent tool description text from built-in and configured roles.
-    pub(crate) fn build(user_defined_agent_roles: &BTreeMap<String, AgentRoleConfig>) -> String {
+    /// Returns the agent mode's multi-agent orchestration guidance, exposed
+    /// only at Ultra reasoning effort so lower efforts keep a
+    /// delegation-free prompt surface (fermilink fork).
+    pub(crate) fn profile_multi_agent_guidance(
+        agent_profile: &str,
+        reasoning_effort: Option<&ReasoningEffort>,
+    ) -> Option<&'static str> {
+        if reasoning_effort != Some(&ReasoningEffort::Ultra) {
+            return None;
+        }
+        codex_agent_profiles::find_agent_profile(agent_profile)?.multi_agent_guidance
+    }
+
+    /// Whether the selected agent mode bundles subagent roles (fermilink
+    /// fork), used to expose the spawn tool's role selector even without
+    /// user-defined roles.
+    pub(crate) fn profile_has_roles(agent_profile: &str) -> bool {
+        !built_in::profile_configs(agent_profile).is_empty()
+    }
+
+    /// Builds the spawn-agent tool description text from built-in,
+    /// mode-provided, and configured roles.
+    pub(crate) fn build(
+        user_defined_agent_roles: &BTreeMap<String, AgentRoleConfig>,
+        agent_profile: &str,
+    ) -> String {
         let built_in_roles = built_in::configs();
-        build_from_configs(built_in_roles, user_defined_agent_roles)
+        let mode_roles = built_in::profile_configs(agent_profile);
+        build_from_configs(built_in_roles, mode_roles, user_defined_agent_roles)
     }
 
     // This function is not inlined for testing purpose.
     fn build_from_configs(
         built_in_roles: &BTreeMap<String, AgentRoleConfig>,
+        mode_roles: &BTreeMap<String, AgentRoleConfig>,
         user_defined_roles: &BTreeMap<String, AgentRoleConfig>,
     ) -> String {
         let mut seen = BTreeSet::new();
         let mut formatted_roles = Vec::new();
         for (name, declaration) in user_defined_roles {
+            if seen.insert(name.as_str()) {
+                formatted_roles.push(format_role(name, declaration));
+            }
+        }
+        for (name, declaration) in mode_roles {
             if seen.insert(name.as_str()) {
                 formatted_roles.push(format_role(name, declaration));
             }
@@ -422,8 +455,40 @@ Rules:
         match path.to_str()? {
             "explorer.toml" => Some(EXPLORER),
             "awaiter.toml" => Some(AWAITER),
-            _ => None,
+            other => codex_agent_profiles::find_agent_profile_role_config(other),
         }
+    }
+
+    /// Returns the subagent roles bundled with the selected agent mode
+    /// (fermilink fork). The default mode contributes none.
+    pub(super) fn profile_configs(
+        agent_profile: &str,
+    ) -> &'static BTreeMap<String, AgentRoleConfig> {
+        static CONFIGS: LazyLock<BTreeMap<String, BTreeMap<String, AgentRoleConfig>>> =
+            LazyLock::new(|| {
+                codex_agent_profiles::BUILT_IN_AGENT_PROFILES
+                    .iter()
+                    .map(|mode| {
+                        let roles = mode
+                            .roles
+                            .iter()
+                            .map(|role| {
+                                (
+                                    role.name.to_string(),
+                                    AgentRoleConfig {
+                                        description: Some(role.description.to_string()),
+                                        config_file: Some(PathBuf::from(role.config_path)),
+                                        nickname_candidates: None,
+                                    },
+                                )
+                            })
+                            .collect();
+                        (mode.id.to_string(), roles)
+                    })
+                    .collect()
+            });
+        static EMPTY: LazyLock<BTreeMap<String, AgentRoleConfig>> = LazyLock::new(BTreeMap::new);
+        CONFIGS.get(agent_profile).unwrap_or(&EMPTY)
     }
 }
 

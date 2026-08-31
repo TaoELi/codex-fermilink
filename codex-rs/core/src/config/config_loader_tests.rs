@@ -38,6 +38,7 @@ use codex_protocol::config_types::TrustLevel;
 use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS;
 use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
+use codex_protocol::models::BaseInstructionsProvenance;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::AskForApproval;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -3390,6 +3391,128 @@ async fn cli_override_model_instructions_file_sets_base_instructions() -> std::i
         config.base_instructions.as_deref(),
         Some("cli override instructions")
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn every_non_default_agent_profile_sets_base_instructions() -> std::io::Result<()> {
+    for profile in codex_agent_profiles::BUILT_IN_AGENT_PROFILES {
+        if profile.id == codex_agent_profiles::DEFAULT_AGENT_PROFILE_ID {
+            continue;
+        }
+        let tmp = tempdir()?;
+        let codex_home = tmp.path().join("home");
+        tokio::fs::create_dir_all(&codex_home).await?;
+        tokio::fs::write(
+            codex_home.join(CONFIG_TOML_FILE),
+            format!("agent_profile = \"{}\"", profile.id),
+        )
+        .await?;
+
+        let config = ConfigBuilder::without_managed_config_for_tests()
+            .codex_home(codex_home)
+            .build()
+            .await?;
+
+        assert_eq!(config.agent_profile, profile.id);
+        assert_eq!(
+            config.base_instructions.as_deref(),
+            profile.base_instructions,
+            "profile `{}` must supply replacement instructions",
+            profile.id
+        );
+        assert_eq!(
+            config.base_instructions_provenance,
+            Some(BaseInstructionsProvenance::Custom)
+        );
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn legacy_agent_mode_key_still_selects_a_profile() -> std::io::Result<()> {
+    let tmp = tempdir()?;
+    let codex_home = tmp.path().join("home");
+    tokio::fs::create_dir_all(&codex_home).await?;
+    tokio::fs::write(
+        codex_home.join(CONFIG_TOML_FILE),
+        r#"agent_mode = "scientific-algorithm""#,
+    )
+    .await?;
+
+    let config = ConfigBuilder::without_managed_config_for_tests()
+        .codex_home(codex_home)
+        .build()
+        .await?;
+
+    assert_eq!(config.agent_profile, "scientific-algorithm");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn agent_profile_override_wins_over_legacy_agent_mode_key() -> std::io::Result<()> {
+    let tmp = tempdir()?;
+    let codex_home = tmp.path().join("home");
+    tokio::fs::create_dir_all(&codex_home).await?;
+    tokio::fs::write(
+        codex_home.join(CONFIG_TOML_FILE),
+        r#"agent_mode = "scientific-algorithm""#,
+    )
+    .await?;
+
+    let config = ConfigBuilder::default()
+        .codex_home(codex_home)
+        .cli_overrides(vec![(
+            "agent_profile".to_string(),
+            TomlValue::String("scientific-simulations".to_string()),
+        )])
+        .build()
+        .await?;
+
+    assert_eq!(config.agent_profile, "scientific-simulations");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn default_agent_profile_keeps_shipped_instructions() -> std::io::Result<()> {
+    let tmp = tempdir()?;
+    let codex_home = tmp.path().join("home");
+    tokio::fs::create_dir_all(&codex_home).await?;
+    tokio::fs::write(codex_home.join(CONFIG_TOML_FILE), "").await?;
+
+    let config = ConfigBuilder::without_managed_config_for_tests()
+        .codex_home(codex_home)
+        .build()
+        .await?;
+
+    assert_eq!(config.agent_profile, "default");
+    assert_eq!(config.base_instructions, None);
+    assert_eq!(config.base_instructions_provenance, None);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn unknown_agent_profile_is_rejected() -> std::io::Result<()> {
+    let tmp = tempdir()?;
+    let codex_home = tmp.path().join("home");
+    tokio::fs::create_dir_all(&codex_home).await?;
+    tokio::fs::write(
+        codex_home.join(CONFIG_TOML_FILE),
+        r#"agent_profile = "not-a-mode""#,
+    )
+    .await?;
+
+    let err = ConfigBuilder::without_managed_config_for_tests()
+        .codex_home(codex_home)
+        .build()
+        .await
+        .expect_err("unknown agent_profile must fail config loading");
+    assert!(err.to_string().contains("unknown agent_profile"));
 
     Ok(())
 }

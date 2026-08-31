@@ -1,0 +1,14 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "codex-agent-profiles"
+version.workspace = true
+
+[lib]
+doctest = false
+name = "codex_agent_profiles"
+path = "src/lib.rs"
+test = false
+
+[lints]
+workspace = true

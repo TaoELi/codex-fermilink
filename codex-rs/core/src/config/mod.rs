@@ -8,6 +8,9 @@ use crate::unified_exec::MIN_EMPTY_YIELD_TIME_MS;
 use crate::windows_sandbox::WindowsSandboxLevelExt;
 use crate::windows_sandbox::resolve_windows_sandbox_mode;
 use crate::windows_sandbox::resolve_windows_sandbox_private_desktop;
+use codex_agent_profiles::BUILT_IN_AGENT_PROFILES;
+use codex_agent_profiles::DEFAULT_AGENT_PROFILE_ID;
+use codex_agent_profiles::find_agent_profile;
 use codex_agent_roles::load_agent_roles;
 use codex_config::CloudConfigBundleLoader;
 use codex_config::ConfigLayerSource;
@@ -673,6 +676,10 @@ pub struct Config {
 
     /// Origin of the configured base instructions when supplied by another session or lockfile.
     pub base_instructions_provenance: Option<BaseInstructionsProvenance>,
+
+    /// Identifier of the resolved agent workflow mode (fermilink fork).
+    /// `"default"` keeps the shipped Codex instructions.
+    pub agent_profile: String,
 
     /// Developer instructions override injected as a separate message.
     pub developer_instructions: Option<String>,
@@ -1604,6 +1611,7 @@ impl Config {
                     Some(BaseInstructionsProvenance::Model { .. })
                 )
             }),
+            force_standard_responses: self.agent_profile != DEFAULT_AGENT_PROFILE_ID,
             personality_enabled: self.features.enabled(Feature::Personality),
             personality: self.personality,
             model_catalog: self.model_catalog.clone(),
@@ -3869,7 +3877,29 @@ impl Config {
             "model instructions file",
         )
         .await?;
+        // Fermilink fork: resolve the selected agent profile. A non-default
+        // profile replaces the base instructions for new threads and takes
+        // precedence over the legacy `model_instructions_file` and inline
+        // `instructions` settings; programmatic overrides still win.
+        let agent_profile_id = cfg
+            .agent_profile
+            .as_deref()
+            .unwrap_or(DEFAULT_AGENT_PROFILE_ID);
+        let agent_profile = find_agent_profile(agent_profile_id).ok_or_else(|| {
+            let known_profiles = BUILT_IN_AGENT_PROFILES
+                .iter()
+                .map(|profile| profile.id)
+                .collect::<Vec<_>>()
+                .join(", ");
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "unknown agent_profile `{agent_profile_id}`; expected one of: {known_profiles}"
+                ),
+            )
+        })?;
         let base_instructions = base_instructions
+            .or_else(|| agent_profile.base_instructions.map(str::to_owned))
             .or(file_base_instructions)
             .or(cfg.instructions.clone());
         let base_instructions_provenance = base_instructions
@@ -4141,6 +4171,7 @@ impl Config {
             notify: cfg.notify,
             base_instructions,
             base_instructions_provenance,
+            agent_profile: agent_profile.id.to_string(),
             personality,
             developer_instructions,
             compact_prompt,

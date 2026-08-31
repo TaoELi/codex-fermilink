@@ -977,6 +977,12 @@ pub(crate) enum AppEvent {
         personality: Personality,
     },
 
+    /// Persist the selected agent workflow mode and start a fresh thread
+    /// under it (fermilink fork).
+    SelectAgentProfile {
+        id: String,
+    },
+
     /// Persist the selected service tier to the appropriate config.
     PersistServiceTierSelection {
         service_tier: Option<String>,

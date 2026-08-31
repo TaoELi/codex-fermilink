@@ -1,0 +1,196 @@
+# Fermilink fork: build the fork's `codex` binary per platform, graft it into
+# the matching OFFICIAL @openai/codex platform vendor tree (which supplies the
+# same-version codex-code-mode-host plus bundled rg/zsh/bwrap), stage the
+# @tel-research/codex-fermilink npm packages, and publish them.
+#
+# Trigger: push a tag like `fermilink-v0.151.0-fermilink.1`. The upstream
+# version embedded in the tag (`0.151.0`) selects which official platform
+# tarballs to graft onto and MUST match the release tag this branch is based
+# on (same-version code-mode IPC contract).
+#
+# Required repo secret: NPM_TOKEN (an npm automation token with publish
+# rights on the @tel-research scope).
+
+name: fermilink-npm-release
+
+on:
+  push:
+    tags:
+      - "fermilink-v*"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+
+jobs:
+  build:
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: codex-rs
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            platform: darwin-arm64
+          - runner: macos-15
+            target: x86_64-apple-darwin
+            platform: darwin-x64
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+            platform: linux-x64
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            platform: linux-arm64
+          - runner: windows-2025
+            target: x86_64-pc-windows-msvc
+            platform: win32-x64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Parse versions from tag
+        id: versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          # fermilink-v0.151.0-fermilink.1 -> fork=0.151.0-fermilink.1, upstream=0.151.0
+          fork_version="${GITHUB_REF_NAME#fermilink-v}"
+          upstream_version="${fork_version%%-fermilink*}"
+          echo "fork=${fork_version}" >> "$GITHUB_OUTPUT"
+          echo "upstream=${upstream_version}" >> "$GITHUB_OUTPUT"
+
+      - name: Install zig (musl cross C toolchain)
+        if: ${{ contains(matrix.target, 'linux') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The musl script prefers zig cc (clang-based) when available;
+          # the gcc fallback rejects the clang-only warning flags that
+          # aws-lc-sys needs on aarch64.
+          ZIGVER=0.14.1
+          arch="$(uname -m)"
+          curl -fsSL "https://ziglang.org/download/${ZIGVER}/zig-${arch}-linux-${ZIGVER}.tar.xz" -o /tmp/zig.tar.xz
+          mkdir -p "$HOME/zig"
+          tar -xJf /tmp/zig.tar.xz -C "$HOME/zig" --strip-components=1
+          echo "$HOME/zig" >> "$GITHUB_PATH"
+
+      - name: Install musl build tools (Linux)
+        if: ${{ contains(matrix.target, 'linux') }}
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: bash "${GITHUB_WORKSPACE}/.github/scripts/install-musl-build-tools.sh"
+
+      - name: Disable aws-lc jitter entropy (musl)
+        if: ${{ contains(matrix.target, 'linux') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "AWS_LC_SYS_NO_JITTER_ENTROPY=1" >> "$GITHUB_ENV"
+          target_no_jitter="AWS_LC_SYS_NO_JITTER_ENTROPY_${{ matrix.target }}"
+          echo "${target_no_jitter//-/_}=1" >> "$GITHUB_ENV"
+
+      - name: Add Rust target
+        shell: bash
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Build fork codex binary
+        shell: bash
+        env:
+          # Local distribution profile: no LTO, no debuginfo.
+          CARGO_PROFILE_RELEASE_LTO: "off"
+          CARGO_PROFILE_RELEASE_DEBUG: "0"
+        run: cargo build --release --target ${{ matrix.target }} --bin codex
+
+      - name: Fetch official platform vendor tree
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          upstream="${{ steps.versions.outputs.upstream }}"
+          mkdir -p vendor-stage
+          curl -fsSL -o official.tgz \
+            "https://registry.npmjs.org/@openai/codex/-/codex-${upstream}-${{ matrix.platform }}.tgz"
+          tar -xzf official.tgz -C vendor-stage
+          test -d "vendor-stage/package/vendor/${{ matrix.target }}"
+
+      - name: Graft fork binary into vendor tree
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          bin_name="codex"
+          if [[ "${{ matrix.platform }}" == win32-* ]]; then bin_name="codex.exe"; fi
+          cp "codex-rs/target/${{ matrix.target }}/release/${bin_name}" \
+             "vendor-stage/package/vendor/${{ matrix.target }}/bin/${bin_name}"
+
+      - name: Stage platform npm package
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          python3 codex-cli/scripts/build_npm_package.py \
+            --package "codex-${{ matrix.platform }}" \
+            --release-version "${{ steps.versions.outputs.fork }}" \
+            --vendor-src "vendor-stage/package/vendor" \
+            --staging-dir npm-staging \
+            --pack-output "codex-fermilink-${{ matrix.platform }}.tgz"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-${{ matrix.platform }}
+          path: codex-fermilink-${{ matrix.platform }}.tgz
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          path: tarballs
+          merge-multiple: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - name: Parse versions from tag
+        id: versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          fork_version="${GITHUB_REF_NAME#fermilink-v}"
+          echo "fork=${fork_version}" >> "$GITHUB_OUTPUT"
+      - name: Publish platform packages
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          for tarball in tarballs/*.tgz; do
+            # Prerelease versions require an explicit dist-tag; use the
+            # platform name embedded in the tarball filename
+            # (codex-fermilink-<platform>.tgz).
+            platform="$(basename "$tarball" .tgz)"
+            platform="${platform#codex-fermilink-}"
+            npm publish --access public --tag "$platform" "$tarball"
+          done
+      - name: Stage and publish launcher package
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          python3 codex-cli/scripts/build_npm_package.py \
+            --package codex \
+            --release-version "${{ steps.versions.outputs.fork }}" \
+            --staging-dir launcher-staging \
+            --pack-output codex-fermilink-launcher.tgz
+          npm publish --access public --tag latest codex-fermilink-launcher.tgz

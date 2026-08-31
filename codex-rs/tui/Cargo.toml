@@ -27,6 +27,7 @@ axum = { workspace = true, default-features = false, features = ["http1", "tokio
 base64 = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
 clap = { workspace = true, features = ["derive"] }
+codex-agent-profiles = { workspace = true }
 codex-ansi-escape = { workspace = true }
 codex-app-server-client = { workspace = true }
 codex-app-server-protocol = { workspace = true }

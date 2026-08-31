@@ -4,6 +4,7 @@ members = [
     "analytics",
     "agent-graph-store",
     "agent-identity",
+    "agent-profiles",
     "agent-roles",
     "backend-client",
     "bwrap",
@@ -45,6 +46,7 @@ members = [
     "core-plugins",
     "diagnostics",
     "hooks",
+    "job-monitor",
     "history",
     "http-client",
     "secrets",
@@ -155,6 +157,7 @@ app_test_support = { path = "app-server/tests/common" }
 codex-analytics = { path = "analytics" }
 codex-agent-graph-store = { path = "agent-graph-store" }
 codex-agent-identity = { path = "agent-identity" }
+codex-agent-profiles = { path = "agent-profiles" }
 codex-agent-roles = { path = "agent-roles" }
 codex-ansi-escape = { path = "ansi-escape" }
 codex-api = { path = "codex-api" }
@@ -213,6 +216,7 @@ codex-file-search = { path = "file-search" }
 codex-file-watcher = { path = "file-watcher" }
 codex-git-utils = { path = "git-utils" }
 codex-hooks = { path = "hooks" }
+codex-job-monitor = { path = "job-monitor" }
 codex-history = { path = "history" }
 codex-keyring-store = { path = "keyring-store" }
 codex-linux-sandbox = { path = "linux-sandbox" }

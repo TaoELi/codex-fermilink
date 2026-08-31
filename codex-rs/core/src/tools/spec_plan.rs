@@ -128,8 +128,10 @@ pub(crate) fn build_tool_router(
     step_store: &ExtensionData,
     tool_suggest_candidates: Option<&crate::tools::router::ToolSuggestCandidates>,
 ) -> CodexResult<ToolRouter> {
-    let default_agent_type_description =
-        crate::agent::role::spawn_tool_spec::build(&std::collections::BTreeMap::new());
+    let default_agent_type_description = crate::agent::role::spawn_tool_spec::build(
+        &std::collections::BTreeMap::new(),
+        &turn_context.config.agent_profile,
+    );
     let wait_for_environment_tool_config = session
         .services
         .thread_extension_data
@@ -284,8 +286,10 @@ pub(crate) fn build_core_tool_registry(
     tool_suggest_candidates: Option<&crate::tools::router::ToolSuggestCandidates>,
     wait_for_environment_tool_config: Option<&Arc<crate::WaitForEnvironmentToolConfig>>,
 ) -> ToolRegistry {
-    let default_agent_type_description =
-        crate::agent::role::spawn_tool_spec::build(&std::collections::BTreeMap::new());
+    let default_agent_type_description = crate::agent::role::spawn_tool_spec::build(
+        &std::collections::BTreeMap::new(),
+        &turn_context.config.agent_profile,
+    );
     let context = CoreToolPlanContext {
         turn_context,
         model_info,
@@ -759,12 +763,23 @@ fn agent_type_description(
     turn_context: &TurnContext,
     default_agent_type_description: &str,
 ) -> String {
-    let agent_type_description =
-        crate::agent::role::spawn_tool_spec::build(&turn_context.config.agent_roles);
-    if agent_type_description.is_empty() {
+    let agent_type_description = crate::agent::role::spawn_tool_spec::build(
+        &turn_context.config.agent_roles,
+        &turn_context.config.agent_profile,
+    );
+    let agent_type_description = if agent_type_description.is_empty() {
         default_agent_type_description.to_string()
     } else {
         agent_type_description
+    };
+    // Fermilink fork: agent-mode orchestration guidance rides the spawn tool
+    // description and is exposed only at Ultra reasoning effort.
+    match crate::agent::role::spawn_tool_spec::profile_multi_agent_guidance(
+        &turn_context.config.agent_profile,
+        turn_context.reasoning_effort(),
+    ) {
+        Some(guidance) => format!("{guidance}\n\n{agent_type_description}"),
+        None => agent_type_description,
     }
 }
 
@@ -1172,6 +1187,17 @@ fn add_core_utility_tools(context: &CoreToolPlanContext<'_>, registry: &mut Tool
         }
     }
 
+    // Fermilink fork: deterministic long-running job monitoring, enabled by
+    // agent profiles with the JobMonitor capability.
+    if codex_agent_profiles::profile_has_capability(
+        &turn_context.config.agent_profile,
+        codex_agent_profiles::ProfileCapability::JobMonitor,
+    ) {
+        registry.add(crate::tools::handlers::JobAttachHandler);
+        registry.add(crate::tools::handlers::JobAwaitHandler);
+        registry.add(crate::tools::handlers::JobStatusHandler);
+    }
+
     if tool_suggest_enabled(turn_context)
         && let Some(candidates) = context
             .tool_suggest_candidates
@@ -1239,7 +1265,10 @@ fn add_collaboration_tools(context: &CoreToolPlanContext<'_>, registry: &mut Too
                     SpawnAgentHandlerV2::new(SpawnAgentToolOptions {
                         available_models: turn_context.available_models.clone(),
                         agent_type_description,
-                        expose_agent_type: !turn_context.config.agent_roles.is_empty(),
+                        expose_agent_type: !turn_context.config.agent_roles.is_empty()
+                            || crate::agent::role::spawn_tool_spec::profile_has_roles(
+                                &turn_context.config.agent_profile,
+                            ),
                         hide_agent_type_model_reasoning: hide_spawn_agent_metadata,
                         expose_spawn_agent_model_overrides: turn_context
                             .config
@@ -1289,7 +1318,10 @@ fn add_collaboration_tools(context: &CoreToolPlanContext<'_>, registry: &mut Too
                 SpawnAgentHandler::new(SpawnAgentToolOptions {
                     available_models: turn_context.available_models.clone(),
                     agent_type_description,
-                    expose_agent_type: !turn_context.config.agent_roles.is_empty(),
+                    expose_agent_type: !turn_context.config.agent_roles.is_empty()
+                        || crate::agent::role::spawn_tool_spec::profile_has_roles(
+                            &turn_context.config.agent_profile,
+                        ),
                     hide_agent_type_model_reasoning: false,
                     expose_spawn_agent_model_overrides: true,
                     multi_agent_version: turn_context.multi_agent_version,

@@ -70,6 +70,113 @@ async fn apply_role_returns_error_for_unknown_role() {
 }
 
 #[tokio::test]
+async fn scientific_profile_roles_resolve_and_apply_pinned_settings() {
+    let (_home, mut config) = test_config_with_cli_overrides(vec![(
+        "agent_profile".to_string(),
+        TomlValue::String(codex_agent_profiles::SCIENTIFIC_ALGORITHM_PROFILE_ID.to_string()),
+    )])
+    .await;
+
+    apply_role_to_config(&mut config, Some("scaling_analyst"))
+        .await
+        .expect("scientific profile role should apply");
+
+    assert_eq!(config.model.as_deref(), Some("gpt-5.6-sol"));
+    assert_eq!(config.model_reasoning_effort, Some(ReasoningEffort::XHigh));
+    assert!(
+        config
+            .developer_instructions
+            .as_deref()
+            .is_some_and(|instructions| {
+                instructions.contains("Analyze candidate algorithms quantitatively")
+            })
+    );
+}
+
+#[tokio::test]
+async fn scientific_profile_roles_are_unavailable_in_default_profile() {
+    let (_home, mut config) = test_config_with_cli_overrides(Vec::new()).await;
+
+    let err = apply_role_to_config(&mut config, Some("scaling_analyst"))
+        .await
+        .expect_err("scientific role should not resolve in default profile");
+
+    assert_eq!(err, "unknown agent_type 'scaling_analyst'");
+}
+
+#[test]
+fn spawn_tool_spec_lists_each_profiles_roles_only_in_that_profile() {
+    for profile in codex_agent_profiles::BUILT_IN_AGENT_PROFILES {
+        let spec = spawn_tool_spec::build(&BTreeMap::new(), profile.id);
+        for role in profile.roles {
+            assert!(
+                spec.contains(role.name),
+                "profile `{}` spawn spec should list `{}`",
+                profile.id,
+                role.name
+            );
+        }
+        assert!(spec.contains("default: {\nDefault agent.\n}"));
+    }
+
+    let scientific_spec = spawn_tool_spec::build(
+        &BTreeMap::new(),
+        codex_agent_profiles::SCIENTIFIC_ALGORITHM_PROFILE_ID,
+    );
+    assert!(scientific_spec.contains(
+        "This role's model is set to `gpt-5.6-sol` and its reasoning effort is set to `max`."
+    ));
+
+    let default_spec = spawn_tool_spec::build(
+        &BTreeMap::new(),
+        codex_agent_profiles::DEFAULT_AGENT_PROFILE_ID,
+    );
+    for profile in codex_agent_profiles::BUILT_IN_AGENT_PROFILES {
+        for role in profile.roles {
+            assert!(
+                !default_spec.contains(role.name),
+                "default spawn spec must not list `{}`",
+                role.name
+            );
+        }
+    }
+}
+
+#[test]
+fn profile_multi_agent_guidance_is_exposed_only_at_ultra_effort() {
+    let ultra_guidance = spawn_tool_spec::profile_multi_agent_guidance(
+        codex_agent_profiles::SCIENTIFIC_ALGORITHM_PROFILE_ID,
+        Some(&ReasoningEffort::Ultra),
+    );
+    assert!(
+        ultra_guidance
+            .is_some_and(|guidance| { guidance.contains("Multi-agent scientific discovery") })
+    );
+
+    assert_eq!(
+        spawn_tool_spec::profile_multi_agent_guidance(
+            codex_agent_profiles::SCIENTIFIC_ALGORITHM_PROFILE_ID,
+            Some(&ReasoningEffort::XHigh),
+        ),
+        None
+    );
+    assert_eq!(
+        spawn_tool_spec::profile_multi_agent_guidance(
+            codex_agent_profiles::SCIENTIFIC_ALGORITHM_PROFILE_ID,
+            /*reasoning_effort*/ None,
+        ),
+        None
+    );
+    assert_eq!(
+        spawn_tool_spec::profile_multi_agent_guidance(
+            codex_agent_profiles::DEFAULT_AGENT_PROFILE_ID,
+            Some(&ReasoningEffort::Ultra),
+        ),
+        None
+    );
+}
+
+#[tokio::test]
 async fn apply_empty_explorer_role_preserves_current_model_and_reasoning_effort() {
     let (_home, mut config) = test_config_with_cli_overrides(Vec::new()).await;
     let before_layers = session_flags_layer_count(&config);
@@ -632,7 +739,10 @@ fn spawn_tool_spec_build_deduplicates_user_defined_built_in_roles() {
         ("researcher".to_string(), AgentRoleConfig::default()),
     ]);
 
-    let spec = spawn_tool_spec::build(&user_defined_roles);
+    let spec = spawn_tool_spec::build(
+        &user_defined_roles,
+        codex_agent_profiles::DEFAULT_AGENT_PROFILE_ID,
+    );
 
     assert!(spec.contains("researcher: no description"));
     assert!(spec.contains("explorer: {\nuser override\n}"));
@@ -651,7 +761,10 @@ fn spawn_tool_spec_lists_user_defined_roles_before_built_ins() {
         },
     )]);
 
-    let spec = spawn_tool_spec::build(&user_defined_roles);
+    let spec = spawn_tool_spec::build(
+        &user_defined_roles,
+        codex_agent_profiles::DEFAULT_AGENT_PROFILE_ID,
+    );
     let user_index = spec.find("aaa: {\nfirst\n}").expect("find user role");
     let built_in_index = spec
         .find("default: {\nDefault agent.\n}")
@@ -678,7 +791,10 @@ fn spawn_tool_spec_marks_role_locked_model_and_reasoning_effort() {
         },
     )]);
 
-    let spec = spawn_tool_spec::build(&user_defined_roles);
+    let spec = spawn_tool_spec::build(
+        &user_defined_roles,
+        codex_agent_profiles::DEFAULT_AGENT_PROFILE_ID,
+    );
 
     assert!(spec.contains(
             "Research carefully.\n- This role's model is set to `gpt-5` and its reasoning effort is set to `high`. These settings cannot be changed."
@@ -703,7 +819,10 @@ fn spawn_tool_spec_marks_role_locked_reasoning_effort_only() {
         },
     )]);
 
-    let spec = spawn_tool_spec::build(&user_defined_roles);
+    let spec = spawn_tool_spec::build(
+        &user_defined_roles,
+        codex_agent_profiles::DEFAULT_AGENT_PROFILE_ID,
+    );
 
     assert!(spec.contains(
             "Review carefully.\n- This role's reasoning effort is set to `medium` and cannot be changed."
@@ -728,7 +847,10 @@ fn spawn_tool_spec_marks_role_locked_service_tier() {
         },
     )]);
 
-    let spec = spawn_tool_spec::build(&user_defined_roles);
+    let spec = spawn_tool_spec::build(
+        &user_defined_roles,
+        codex_agent_profiles::DEFAULT_AGENT_PROFILE_ID,
+    );
 
     assert!(spec.contains(
         "Stay fast.\n- This role's service tier is set to `priority`. If it is supported by the resolved model, it takes precedence over a valid spawn request service tier."

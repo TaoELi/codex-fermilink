@@ -25,6 +25,7 @@ chrono = { workspace = true, features = ["serde"] }
 clap = { workspace = true, features = ["derive"] }
 codex-analytics = { workspace = true }
 codex-agent-graph-store = { workspace = true }
+codex-agent-profiles = { workspace = true }
 codex-agent-roles = { workspace = true }
 codex-api = { workspace = true }
 codex-app-server-protocol = { workspace = true }
@@ -53,6 +54,7 @@ codex-execpolicy = { workspace = true }
 codex-git-utils = { workspace = true }
 codex-history = { workspace = true }
 codex-hooks = { workspace = true }
+codex-job-monitor = { workspace = true }
 codex-http-client = { workspace = true }
 codex-install-context = { workspace = true }
 codex-network-proxy = { workspace = true }

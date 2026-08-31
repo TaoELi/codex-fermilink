@@ -13,6 +13,7 @@ pub enum SlashCommand {
     // DO NOT ALPHA-SORT! Enum order is presentation order in the popup, so
     // more frequently used commands should be listed first.
     Model,
+    Profile,
     Ide,
     Permissions,
     Keymap,
@@ -123,6 +124,7 @@ impl SlashCommand {
             SlashCommand::MemoryDrop => "DO NOT USE",
             SlashCommand::MemoryUpdate => "DO NOT USE",
             SlashCommand::Model => "choose what model and reasoning effort to use",
+            SlashCommand::Profile => "choose the agent profile and base instructions",
             SlashCommand::Ide => {
                 "include current selection, open files, and other context from your IDE"
             }
@@ -207,6 +209,7 @@ impl SlashCommand {
     pub fn available_during_task(self) -> bool {
         match self {
             SlashCommand::New
+            | SlashCommand::Profile
             | SlashCommand::Archive
             | SlashCommand::Delete
             | SlashCommand::Fork

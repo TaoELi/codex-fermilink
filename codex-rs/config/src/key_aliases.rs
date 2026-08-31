@@ -9,6 +9,12 @@ struct ConfigKeyAlias {
 }
 
 const CONFIG_KEY_ALIASES: &[ConfigKeyAlias] = &[
+    // Fermilink fork: `/mode` era key for the agent profile.
+    ConfigKeyAlias {
+        table_path: &[],
+        legacy_key: "agent_mode",
+        canonical_key: "agent_profile",
+    },
     ConfigKeyAlias {
         table_path: &["memories"],
         legacy_key: "no_memories_if_mcp_or_web_search",

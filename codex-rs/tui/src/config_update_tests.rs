@@ -18,6 +18,37 @@ fn app_scoped_key_path_quotes_dotted_app_ids() {
 }
 
 #[test]
+fn agent_profile_edits_persist_non_default_and_clear_default() {
+    let clear_legacy_key = ConfigEdit {
+        key_path: "agent_mode".to_string(),
+        value: serde_json::Value::Null,
+        merge_strategy: MergeStrategy::Replace,
+    };
+    assert_eq!(
+        build_agent_profile_selection_edits("scientific-algorithm"),
+        vec![
+            ConfigEdit {
+                key_path: "agent_profile".to_string(),
+                value: serde_json::json!("scientific-algorithm"),
+                merge_strategy: MergeStrategy::Replace,
+            },
+            clear_legacy_key.clone(),
+        ]
+    );
+    assert_eq!(
+        build_agent_profile_selection_edits(codex_agent_profiles::DEFAULT_AGENT_PROFILE_ID),
+        vec![
+            ConfigEdit {
+                key_path: "agent_profile".to_string(),
+                value: serde_json::Value::Null,
+                merge_strategy: MergeStrategy::Replace,
+            },
+            clear_legacy_key,
+        ]
+    );
+}
+
+#[test]
 fn trusted_project_edit_targets_project_trust_level() {
     assert_eq!(
         trusted_project_edit(Path::new("/workspace/team.project")),

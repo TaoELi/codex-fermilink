@@ -3,6 +3,7 @@ source: tui/src/bottom_pane/command_popup.rs
 expression: commands
 ---
 /model - choose what model and reasoning effort to use
+/profile - choose the agent profile and base instructions
 /ide - include current selection, open files, and other context from your IDE
 /permissions - choose what Codex is allowed to do
 /keymap - remap TUI shortcuts

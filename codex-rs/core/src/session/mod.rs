@@ -679,6 +679,25 @@ impl Session {
             .clone()
             .or_else(|| conversation_history.get_base_instructions().map(|s| s.text))
             .unwrap_or_else(|| model_info.get_model_instructions(config.personality));
+        // Fermilink fork: when a resumed thread carries explicitly custom base
+        // instructions and the current config supplies none, feed them into
+        // the per-turn model-info overrides so they keep replacing the model
+        // template after resume; a recognized agent-mode prompt also keeps the
+        // standard Responses transport.
+        let mut model_info_overrides: crate::session::step_settings::ModelInfoOverrides =
+            config.to_models_manager_config().into();
+        if model_info_overrides.base_instructions.is_none()
+            && let Some(inherited) =
+                conversation_history
+                    .get_base_instructions()
+                    .filter(|inherited| {
+                        inherited.provenance == Some(BaseInstructionsProvenance::Custom)
+                    })
+        {
+            model_info_overrides.force_standard_responses =
+                codex_agent_profiles::find_agent_profile_by_instructions(&inherited.text).is_some();
+            model_info_overrides.base_instructions = Some(inherited.text);
+        }
 
         // Dynamic tools are defined at thread start and persisted in rollout session metadata.
         let dynamic_tools = if dynamic_tools.is_empty() {
@@ -717,7 +736,7 @@ impl Session {
                 approval_policy: config.permissions.approval_policy.clone(),
                 approvals_reviewer: config.approvals_reviewer,
             }),
-            model_info_overrides: config.to_models_manager_config().into(),
+            model_info_overrides,
             developer_instructions: config.developer_instructions.clone(),
             base_instructions,
             permission_profile_state: session_permission_profile_state_from_config(&config)?,

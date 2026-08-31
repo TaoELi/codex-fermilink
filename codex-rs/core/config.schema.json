@@ -5555,6 +5555,10 @@
   },
   "description": "Base config deserialized from ~/.codex/config.toml.",
   "properties": {
+    "agent_profile": {
+      "description": "Agent profile applied to newly created threads (fermilink fork). `\"default\"` (or unset) keeps the shipped Codex instructions; the scientific profiles (`\"scientific-algorithm\"`, `\"scientific-simulations\"`, `\"scientific-measurements\"`) replace them with built-in research prompts and bundle subagent roles.",
+      "type": "string"
+    },
     "agents": {
       "allOf": [
         {

@@ -23,6 +23,12 @@ const PERSONALITY_PLACEHOLDER: &str = "{{ personality }}";
 const PERSONALITY_SECTION_HEADER: &str = "# Personality";
 
 pub fn with_config_overrides(mut model: ModelInfo, config: &ModelsManagerConfig) -> ModelInfo {
+    // Fermilink fork: agent-mode replacement instructions must ride the
+    // standard Responses path, where they are sent as the top-level
+    // `instructions` field instead of a developer message.
+    if config.force_standard_responses {
+        model.use_responses_lite = false;
+    }
     if let Some(context_window) = config.model_context_window {
         model.context_window = Some(
             model

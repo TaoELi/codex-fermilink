@@ -14,12 +14,11 @@ const require = createRequire(import.meta.url);
 const codexPackageRoot = realpathSync(path.join(__dirname, ".."));
 
 const PLATFORM_PACKAGE_BY_TARGET = {
-  "x86_64-unknown-linux-musl": "@openai/codex-linux-x64",
-  "aarch64-unknown-linux-musl": "@openai/codex-linux-arm64",
-  "x86_64-apple-darwin": "@openai/codex-darwin-x64",
-  "aarch64-apple-darwin": "@openai/codex-darwin-arm64",
-  "x86_64-pc-windows-msvc": "@openai/codex-win32-x64",
-  "aarch64-pc-windows-msvc": "@openai/codex-win32-arm64",
+  "x86_64-unknown-linux-musl": "@tel-research/codex-fermilink-linux-x64",
+  "aarch64-unknown-linux-musl": "@tel-research/codex-fermilink-linux-arm64",
+  "x86_64-apple-darwin": "@tel-research/codex-fermilink-darwin-x64",
+  "aarch64-apple-darwin": "@tel-research/codex-fermilink-darwin-arm64",
+  "x86_64-pc-windows-msvc": "@tel-research/codex-fermilink-win32-x64",
 };
 
 const { platform, arch } = process;
@@ -98,10 +97,10 @@ function findCodexExecutable() {
   const packageManager = detectPackageManager();
   const updateCommand =
     packageManager === "bun"
-      ? "bun install -g @openai/codex@latest"
+      ? "bun install -g @tel-research/codex-fermilink@latest"
       : packageManager === "pnpm"
-        ? "pnpm add -g @openai/codex@latest"
-        : "npm install -g @openai/codex@latest";
+        ? "pnpm add -g @tel-research/codex-fermilink@latest"
+        : "npm install -g @tel-research/codex-fermilink@latest";
   throw new Error(
     `Missing optional dependency ${platformPackage}. Reinstall Codex: ${updateCommand}`,
   );
@@ -122,7 +121,7 @@ function isPnpmOwnedCodexInstall(nodeModulesDir) {
 
   try {
     return (
-      realpathSync(path.join(nodeModulesDir, "@openai", "codex")) ===
+      realpathSync(path.join(nodeModulesDir, "@tel-research", "codex-fermilink")) ===
       codexPackageRoot
     );
   } catch {

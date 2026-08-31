@@ -85,6 +85,11 @@ const PROJECT_LOCAL_CONFIG_DENYLIST: &[&str] = &[
     "experimental_realtime_webrtc_call_base_url",
     "experimental_realtime_ws_base_url",
     "otel",
+    // Fermilink fork: a repository must not silently switch the agent's root
+    // profile; the profile is chosen from user-level config or /profile.
+    "agent_profile",
+    // Legacy alias of `agent_profile`; still deserializable, so still denied.
+    "agent_mode",
 ];
 
 async fn first_layer_config_error_from_entries(layers: &[ConfigLayerEntry]) -> Option<ConfigError> {

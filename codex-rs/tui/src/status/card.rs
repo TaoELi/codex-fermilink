@@ -122,6 +122,9 @@ struct StatusHistoryCell {
     directory: PathBuf,
     permissions: String,
     agents_summary: Arc<RwLock<String>>,
+    /// Display name of the agent profile when it is not the default
+    /// (fermilink fork).
+    agent_profile: Option<String>,
     collaboration_mode: Option<String>,
     model_provider: Option<String>,
     remote_connection: Option<RemoteConnectionStatus>,
@@ -372,6 +375,14 @@ impl StatusHistoryCell {
                 model_details,
                 directory: config.cwd.to_path_buf(),
                 permissions,
+                agent_profile: (config.agent_profile
+                    != codex_agent_profiles::DEFAULT_AGENT_PROFILE_ID)
+                    .then(|| {
+                        codex_agent_profiles::find_agent_profile(&config.agent_profile).map_or_else(
+                            || config.agent_profile.clone(),
+                            |mode| mode.display_name.to_string(),
+                        )
+                    }),
                 collaboration_mode: collaboration_mode.map(ToString::to_string),
                 model_provider,
                 remote_connection: remote_connection.cloned(),
@@ -782,6 +793,9 @@ impl HistoryCell for StatusHistoryCell {
         if self.session_id.is_some() && self.forked_from.is_some() {
             push_label(&mut labels, &mut seen, "Forked from");
         }
+        if self.agent_profile.is_some() {
+            push_label(&mut labels, &mut seen, "Agent profile");
+        }
         if self.collaboration_mode.is_some() {
             push_label(&mut labels, &mut seen, "Collaboration mode");
         }
@@ -842,6 +856,9 @@ impl HistoryCell for StatusHistoryCell {
         let directory_value = format_directory_display(&self.directory, Some(value_width));
 
         lines.push(formatter.line("Model", model_spans));
+        if let Some(agent_profile) = self.agent_profile.as_ref() {
+            lines.push(formatter.line("Agent profile", vec![Span::from(agent_profile.clone())]));
+        }
         if let Some(model_provider) = self.model_provider.as_ref() {
             lines.push(formatter.line("Model provider", vec![Span::from(model_provider.clone())]));
         }

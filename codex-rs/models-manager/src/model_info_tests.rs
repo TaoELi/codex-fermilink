@@ -21,6 +21,28 @@ fn config_with_personality(personality: Option<Personality>) -> ModelsManagerCon
     }
 }
 
+/// Fermilink fork: agent-mode replacement instructions ride the standard
+/// Responses path, while plain custom instructions keep the model's default
+/// transport (Guardian review relies on custom instructions over Lite).
+#[test]
+fn force_standard_responses_disables_responses_lite() {
+    let mut model = model_info_from_slug("unknown-model");
+    model.use_responses_lite = true;
+
+    let custom_only = ModelsManagerConfig {
+        base_instructions: Some("replacement instructions".to_string()),
+        ..Default::default()
+    };
+    assert!(with_config_overrides(model.clone(), &custom_only).use_responses_lite);
+
+    let forced = ModelsManagerConfig {
+        base_instructions: Some("replacement instructions".to_string()),
+        force_standard_responses: true,
+        ..Default::default()
+    };
+    assert!(!with_config_overrides(model, &forced).use_responses_lite);
+}
+
 #[test]
 fn base_instruction_override_is_literal_and_preserves_catalog_messages() {
     let override_instructions = "override {{ personality }}";

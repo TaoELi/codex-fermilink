@@ -2180,6 +2180,49 @@ impl App {
                     }
                 }
             }
+            AppEvent::SelectAgentProfile { id } => {
+                if id == self.chat_widget.config_ref().agent_profile {
+                    let display_name = codex_agent_profiles::find_agent_profile(&id)
+                        .map_or(id.as_str(), |mode| mode.display_name);
+                    self.chat_widget.add_info_message(
+                        format!("Already using the {display_name} profile"),
+                        /*hint*/ None,
+                    );
+                } else {
+                    match crate::config_update::write_config_batch(
+                        app_server.request_handle(),
+                        crate::config_update::build_agent_profile_selection_edits(&id),
+                    )
+                    .await
+                    {
+                        Ok(_) => {
+                            // Base instructions are thread-scoped, so a mode
+                            // change starts a fresh thread; the fresh-session
+                            // path reloads the persisted config from disk.
+                            self.start_fresh_session_with_summary_hint(
+                                tui,
+                                app_server,
+                                /*session_start_source*/ None,
+                                /*initial_user_message*/ None,
+                                /*new_thread_name*/ None,
+                            )
+                            .await;
+                            let display_name = codex_agent_profiles::find_agent_profile(&id)
+                                .map_or(id.as_str(), |mode| mode.display_name);
+                            self.chat_widget.add_info_message(
+                                format!("Agent profile changed to {display_name}; started a new chat"),
+                                /*hint*/ None,
+                            );
+                        }
+                        Err(err) => {
+                            let error = format_config_error(&err);
+                            tracing::error!(error = %error, "failed to persist agent profile selection");
+                            self.chat_widget
+                                .add_error_message(format!("Failed to save agent profile: {error}"));
+                        }
+                    }
+                }
+            }
             AppEvent::PersistServiceTierSelection { service_tier } => {
                 self.refresh_status_line();
                 self.config.service_tier = service_tier.clone();
