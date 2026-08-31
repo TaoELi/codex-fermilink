@@ -16,13 +16,19 @@ use crate::tools::context::boxed_tool_output;
 use crate::tools::handlers::parse_arguments;
 use crate::tools::registry::CoreToolRuntime;
 use crate::tools::registry::ToolExecutor;
+use codex_extension_items::ExtensionItem;
+use codex_extension_items::sleep::SleepItem;
 use codex_job_monitor::INITIAL_POLL_INTERVAL;
 use codex_job_monitor::JobRecord;
 use codex_job_monitor::JobSnapshot;
 use codex_job_monitor::JobTarget;
+use codex_job_monitor::MAX_POLL_INTERVAL;
 use codex_job_monitor::UNKNOWN_CONSECUTIVE_LIMIT;
 use codex_job_monitor::next_poll_interval;
 use codex_job_monitor::snapshot_job;
+use codex_protocol::items::TurnItem;
+use codex_protocol::protocol::EventMsg;
+use codex_protocol::protocol::WarningEvent;
 use codex_tools::JsonSchema;
 use codex_tools::ResponsesApiNamespace;
 use codex_tools::ResponsesApiNamespaceTool;
@@ -197,6 +203,15 @@ impl ToolExecutor<ToolInvocation> for JobAttachHandler {
             let snapshot = snapshot_job(&store, record).await.map_err(|err| {
                 FunctionCallError::RespondToModel(format!("failed to persist job record: {err}"))
             })?;
+            if snapshot.state.is_terminal() {
+                // The attach reply is the notification: keep the session job
+                // watcher from waking the agent again for this dead job.
+                let mut record = snapshot.record.clone();
+                record.notified_at = Some(chrono::Utc::now());
+                if let Err(err) = record.save(&store).await {
+                    tracing::warn!(%err, "failed to persist attach-time notification state");
+                }
+            }
             let mut text = format!("Attached {}.\n", snapshot.record.target.display());
             text.push_str(&format_snapshot(&snapshot));
             if snapshot.state.is_terminal() {
@@ -346,7 +361,7 @@ impl ToolExecutor<ToolInvocation> for JobAwaitHandler {
         );
         namespace_tool(ResponsesApiTool {
             name: "job_await".to_string(),
-            description: "Wait for attached jobs with deterministic, adaptive polling (no agent turns are spent while waiting). Returns when a job reaches a terminal state, a suspicious log line appears (NaN, divergence, OOM, crash), the scheduler stops answering, new user input arrives, or the wait budget elapses.".to_string(),
+            description: "Wait for attached jobs with deterministic, adaptive polling (no agent turns are spent while waiting). Returns when a job reaches a terminal state, a suspicious log line appears (NaN, divergence, OOM, crash), the scheduler stops answering, new user input arrives, or the wait budget elapses. If you instead end your turn with jobs running, a deterministic watcher wakes you when they complete.".to_string(),
             strict: false,
             defer_loading: None,
             parameters: JsonSchema::object(
@@ -370,6 +385,7 @@ impl ToolExecutor<ToolInvocation> for JobAwaitHandler {
             let ToolInvocation {
                 session,
                 turn,
+                call_id,
                 payload,
                 ..
             } = invocation;
@@ -414,12 +430,49 @@ impl ToolExecutor<ToolInvocation> for JobAwaitHandler {
                 .subscribe_activity(turn_state.as_deref())
                 .await;
 
+            // Visibility while parked: reuse the interruptible-sleep item so
+            // the UI shows this turn is deliberately waiting on jobs, with
+            // the wait budget as its duration.
+            let await_item = TurnItem::Extension(ExtensionItem::Sleep(SleepItem {
+                id: call_id,
+                duration_ms: budget.as_millis().min(u128::from(u64::MAX)) as u64,
+            }));
+            session
+                .emit_turn_item_started(turn.as_ref(), &await_item)
+                .await;
+            let waiting_on = records
+                .iter()
+                .map(|record| record.target.display())
+                .collect::<Vec<_>>()
+                .join(", ");
+            session
+                .send_event(
+                    turn.as_ref(),
+                    EventMsg::Warning(WarningEvent {
+                        message: format!(
+                            "[jobs] awaiting {waiting_on}; budget {}s, polling {}s\u{2192}{}s; new input interrupts the wait",
+                            budget.as_secs(),
+                            INITIAL_POLL_INTERVAL.as_secs(),
+                            codex_job_monitor::MAX_POLL_INTERVAL.as_secs(),
+                        ),
+                    }),
+                )
+                .await;
+
             let started = Instant::now();
             let mut poll_interval = INITIAL_POLL_INTERVAL;
             let mut consecutive_unknown: u32 = 0;
             let mut interrupted = pending_activity.is_some();
             let mut stop_reason: Option<String> = None;
             let mut snapshots: Vec<JobSnapshot>;
+            let mut last_state_tokens: BTreeMap<String, String> = records
+                .iter()
+                .filter_map(|record| {
+                    record
+                        .latest_state()
+                        .map(|state| (record.target.display(), state.token.clone()))
+                })
+                .collect();
 
             loop {
                 let mut next_records = Vec::with_capacity(records.len());
@@ -441,6 +494,31 @@ impl ToolExecutor<ToolInvocation> for JobAwaitHandler {
                     consecutive_unknown += 1;
                 } else {
                     consecutive_unknown = 0;
+                }
+
+                // Surface state transitions (e.g. PENDING -> RUNNING) live,
+                // so long waits stay legible in the UI.
+                for snapshot in &snapshots {
+                    let target = snapshot.record.target.display();
+                    let token = snapshot.state.token.clone();
+                    let previous = last_state_tokens.insert(target.clone(), token.clone());
+                    if previous
+                        .as_deref()
+                        .is_some_and(|previous| previous != token)
+                    {
+                        session
+                            .send_event(
+                                turn.as_ref(),
+                                EventMsg::Warning(WarningEvent {
+                                    message: format!(
+                                        "[jobs] {target} {} \u{2192} {token} ({}m elapsed)",
+                                        previous.unwrap_or_default(),
+                                        started.elapsed().as_secs() / 60,
+                                    ),
+                                }),
+                            )
+                            .await;
+                    }
                 }
 
                 if let Some(terminal) = snapshots
@@ -496,6 +574,30 @@ impl ToolExecutor<ToolInvocation> for JobAwaitHandler {
                     }
                 }
                 poll_interval = next_poll_interval(poll_interval);
+            }
+
+            session
+                .emit_turn_item_completed(turn.as_ref(), await_item)
+                .await;
+
+            // The await's own return is the notification for anything
+            // terminal or suspicious it observed; keep the session job
+            // watcher from waking the agent again for the same outcome.
+            for snapshot in &snapshots {
+                if !snapshot.state.is_terminal() && !snapshot.has_suspicious_logs() {
+                    continue;
+                }
+                let mut record = snapshot.record.clone();
+                if snapshot.state.is_terminal() {
+                    record.notified_at = Some(chrono::Utc::now());
+                }
+                if snapshot.has_suspicious_logs() {
+                    record.suspicious_signature =
+                        Some(crate::job_watcher::suspicious_signature(snapshot));
+                }
+                if let Err(err) = record.save(&store).await {
+                    tracing::warn!(%err, "failed to persist await notification state");
+                }
             }
 
             let mut text = String::new();

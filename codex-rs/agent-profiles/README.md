@@ -157,6 +157,29 @@ The simulations and measurements profiles enable three tools backed by the
 Records persist under `$CODEX_HOME/jobs/<thread-id>/`, so a multi-day SLURM
 job survives closed laptops and resumed sessions.
 
+While `job_await` is parked, the turn shows a sleep-style waiting item sized
+to the wait budget, and job state transitions (for example
+PENDING → RUNNING) surface as live notices.
+
+### Session job watcher (`jobs.*` config)
+
+If a turn ends while attached jobs are still active, a session-resident
+watcher (enabled by the JobMonitor capability) keeps polling with the same
+deterministic engine and wakes the idle agent by injecting a bounded
+`[job monitor]` message — which starts a new turn with full context — when a
+job reaches a terminal state or new suspicious log lines appear. Each
+terminal transition wakes at most once (`notified_at` on the job record; an
+await or attach that already reported the outcome also counts), interrupted
+sessions are never auto-resumed, and `jobs.max_auto_continues` bounds
+runaway loops. Configuration:
+
+```toml
+[jobs]
+auto_continue = true        # default; set false to disable the watcher
+check_in_seconds = 21600    # optional periodic "still running" wake-ups
+max_auto_continues = 50     # default cap on automatic wake-ups per session
+```
+
 ## Adding a profile
 
 Add `profiles/<id>/{prompt.md, multi_agent.md, agents/*.toml}`, the

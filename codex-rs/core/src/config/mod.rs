@@ -677,9 +677,19 @@ pub struct Config {
     /// Origin of the configured base instructions when supplied by another session or lockfile.
     pub base_instructions_provenance: Option<BaseInstructionsProvenance>,
 
-    /// Identifier of the resolved agent workflow mode (fermilink fork).
+    /// Identifier of the resolved agent profile (fermilink fork).
     /// `"default"` keeps the shipped Codex instructions.
     pub agent_profile: String,
+
+    /// Whether the session job watcher wakes the idle agent when an attached
+    /// job completes or turns suspicious (fermilink fork).
+    pub jobs_auto_continue: bool,
+
+    /// Optional periodic check-in interval for the job watcher, in seconds.
+    pub jobs_check_in_seconds: Option<u64>,
+
+    /// Upper bound on automatic job-watcher wake-ups per session.
+    pub jobs_max_auto_continues: u32,
 
     /// Developer instructions override injected as a separate message.
     pub developer_instructions: Option<String>,
@@ -4172,6 +4182,17 @@ impl Config {
             base_instructions,
             base_instructions_provenance,
             agent_profile: agent_profile.id.to_string(),
+            jobs_auto_continue: cfg
+                .jobs
+                .as_ref()
+                .and_then(|jobs| jobs.auto_continue)
+                .unwrap_or(true),
+            jobs_check_in_seconds: cfg.jobs.as_ref().and_then(|jobs| jobs.check_in_seconds),
+            jobs_max_auto_continues: cfg
+                .jobs
+                .as_ref()
+                .and_then(|jobs| jobs.max_auto_continues)
+                .unwrap_or(50),
             personality,
             developer_instructions,
             compact_prompt,

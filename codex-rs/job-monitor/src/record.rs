@@ -83,6 +83,14 @@ pub struct JobRecord {
     /// Newest last; consecutive duplicates collapsed.
     #[serde(default)]
     pub history: Vec<StateObservation>,
+    /// When the session job watcher woke the agent for this job's terminal
+    /// state; a notified job is never woken for again.
+    #[serde(default)]
+    pub notified_at: Option<DateTime<Utc>>,
+    /// Fingerprint of the suspicious log lines already reported, so repeated
+    /// idle polls do not re-wake the agent for the same lines.
+    #[serde(default)]
+    pub suspicious_signature: Option<String>,
 }
 
 impl JobRecord {
@@ -93,6 +101,8 @@ impl JobRecord {
             log_paths,
             attached_at: Utc::now(),
             history: Vec::new(),
+            notified_at: None,
+            suspicious_signature: None,
         }
     }
 

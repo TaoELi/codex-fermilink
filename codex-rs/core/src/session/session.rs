@@ -1546,6 +1546,27 @@ impl Session {
             sess.start_mcp_prewarm_worker(mcp_prewarm_rx, mcp_auth_changes);
             sess.schedule_startup_prewarm(session_configuration.base_instructions.clone())
                 .await;
+            // Fermilink fork: wake the idle agent when attached long-running
+            // jobs complete, for profiles with the JobMonitor capability.
+            if config.jobs_auto_continue
+                && codex_agent_profiles::profile_has_capability(
+                    &config.agent_profile,
+                    codex_agent_profiles::ProfileCapability::JobMonitor,
+                )
+            {
+                crate::job_watcher::spawn_job_watcher(crate::job_watcher::JobWatcherHandles {
+                    thread_id: sess.thread_id,
+                    store_dir: config
+                        .codex_home
+                        .as_path()
+                        .join("jobs")
+                        .join(sess.thread_id.to_string()),
+                    agent_status: sess.agent_status.subscribe(),
+                    agent_control: sess.services.agent_control.clone(),
+                    check_in: config.jobs_check_in_seconds.map(std::time::Duration::from_secs),
+                    max_auto_continues: config.jobs_max_auto_continues,
+                });
+            }
             let session_start_source = match &initial_history {
                 InitialHistory::Resumed(_) => codex_hooks::SessionStartSource::Resume,
                 InitialHistory::New | InitialHistory::Forked(_) => {

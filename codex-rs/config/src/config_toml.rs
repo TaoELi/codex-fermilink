@@ -149,6 +149,22 @@ pub struct OrchestratorFeatureToml {
     pub enabled: Option<bool>,
 }
 
+/// Deterministic job-monitoring settings (fermilink fork), used by agent
+/// profiles with the JobMonitor capability.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct JobsToml {
+    /// Wake the idle agent automatically when an attached job completes or
+    /// its logs turn suspicious. Defaults to true.
+    pub auto_continue: Option<bool>,
+    /// Optional interval, in seconds, for periodic "still running" check-in
+    /// wake-ups while jobs are active and the agent is idle. Off by default.
+    pub check_in_seconds: Option<u64>,
+    /// Upper bound on automatic wake-ups per session (default 50), bounding
+    /// runaway submit/wake loops.
+    pub max_auto_continues: Option<u32>,
+}
+
 /// Base config deserialized from ~/.codex/config.toml.
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, JsonSchema)]
 #[schemars(deny_unknown_fields)]
@@ -252,6 +268,10 @@ pub struct ConfigToml {
     /// with built-in research prompts and bundle subagent roles. The legacy
     /// `agent_mode` key is migrated via the config key-alias table.
     pub agent_profile: Option<String>,
+
+    /// Deterministic job-monitoring behavior for profiles with the
+    /// JobMonitor capability (fermilink fork).
+    pub jobs: Option<JobsToml>,
 
     /// Compact prompt used for history compaction.
     pub compact_prompt: Option<String>,
