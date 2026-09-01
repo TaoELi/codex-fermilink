@@ -19,6 +19,7 @@ pub use probe::query_slurm_state;
 pub use record::JobRecord;
 pub use record::JobTarget;
 pub use record::StateObservation;
+pub use record::WakePolicy;
 pub use state::JobPhase;
 pub use state::JobState;
 pub use state::classify_sacct_output;
@@ -27,7 +28,10 @@ pub use state::classify_states;
 pub use state::normalize_state_token;
 pub use tail::LogTail;
 pub use tail::TAIL_BYTES;
+pub use tail::compile_watch_patterns;
 pub use tail::read_log_tail;
+pub use tail::read_log_tail_with_patterns;
+pub use tail::validate_watch_pattern;
 
 use std::path::Path;
 use std::time::Duration;
@@ -43,9 +47,41 @@ const POLL_BACKOFF_DENOMINATOR: u32 = 2;
 /// problem instead of waiting forever on a job the scheduler forgot.
 pub const UNKNOWN_CONSECUTIVE_LIMIT: u32 = 3;
 
+/// A running job this far past its expected runtime is reported once as
+/// suspicious (hung dynamics and deadlocked I/O look like "still running").
+pub const OVERRUN_WAKE_RATIO: f64 = 2.0;
+
 /// Returns the next poll interval after `current`.
 pub fn next_poll_interval(current: Duration) -> Duration {
     (current * POLL_BACKOFF_NUMERATOR / POLL_BACKOFF_DENOMINATOR).min(MAX_POLL_INTERVAL)
+}
+
+/// Parses a human expected-runtime spec — `"90"`, `"45m"`, `"6h"`, `"2d"` —
+/// into seconds.
+pub fn parse_expected_runtime(spec: &str) -> Result<u64, String> {
+    let spec = spec.trim();
+    let (number, unit) = match spec.chars().last() {
+        Some(unit) if unit.is_ascii_alphabetic() => (&spec[..spec.len() - 1], unit),
+        _ => (spec, 's'),
+    };
+    let value: u64 = number
+        .trim()
+        .parse()
+        .map_err(|_| format!("invalid expected_runtime `{spec}`; use e.g. 90s, 45m, 6h, 2d"))?;
+    let seconds = match unit.to_ascii_lowercase() {
+        's' => Some(value),
+        'm' => value.checked_mul(60),
+        'h' => value.checked_mul(3600),
+        'd' => value.checked_mul(86400),
+        _ => {
+            return Err(format!(
+                "invalid expected_runtime unit `{unit}`; use s, m, h, or d"
+            ));
+        }
+    };
+    seconds
+        .filter(|seconds| *seconds > 0)
+        .ok_or_else(|| format!("expected_runtime `{spec}` must be a positive duration"))
 }
 
 /// Probes one target's current state. PID targets report `RUNNING` while
@@ -61,6 +97,7 @@ pub async fn probe_target(target: &JobTarget) -> JobState {
                 JobState {
                     token: "EXITED".to_string(),
                     phase: JobPhase::Completed,
+                    detail: None,
                 }
             }
         }
@@ -81,16 +118,29 @@ impl JobSnapshot {
             .iter()
             .any(|tail| !tail.suspicious_lines.is_empty())
     }
+
+    /// `Some(ratio)` once a still-running job has passed
+    /// [`OVERRUN_WAKE_RATIO`]× its expected runtime and the overrun has not
+    /// been reported to the agent yet.
+    pub fn unreported_overrun(&self) -> Option<f64> {
+        if self.state.is_terminal() || self.record.overrun_notified {
+            return None;
+        }
+        let ratio = self.record.runtime_ratio(chrono::Utc::now())?;
+        (ratio >= OVERRUN_WAKE_RATIO).then_some(ratio)
+    }
 }
 
-/// Probes a target, updates and persists its record, and gathers log tails.
+/// Probes a target, updates and persists its record, and gathers log tails
+/// scanned with the record's extra watch patterns.
 pub async fn snapshot_job(store_dir: &Path, mut record: JobRecord) -> std::io::Result<JobSnapshot> {
     let state = probe_target(&record.target).await;
     record.observe(state.clone());
     record.save(store_dir).await?;
+    let extra_patterns = compile_watch_patterns(&record.watch_patterns);
     let mut log_tails = Vec::with_capacity(record.log_paths.len());
     for path in &record.log_paths {
-        log_tails.push(read_log_tail(path).await);
+        log_tails.push(read_log_tail_with_patterns(path, &extra_patterns).await);
     }
     Ok(JobSnapshot {
         record,

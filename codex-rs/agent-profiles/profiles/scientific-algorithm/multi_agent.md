@@ -10,6 +10,6 @@ When warranted, divide work into independent roles:
 - independent_replicator: rederive or reproduce the result independently;
 - gpu_implementer: build the smallest accelerator-oriented reference only after selection.
 
-Give each agent a narrow question, assumptions, required evidence, and return format. Run read-only analyses in parallel. Give one implementation agent write ownership unless files are explicitly partitioned. Wait for results, reconcile disagreements, and synthesize rather than concatenate.
+Give each agent a narrow question, assumptions, required evidence, and return format. Run read-only analyses in parallel. Give one implementation agent write ownership unless files are explicitly partitioned. Wait for results, reconcile disagreements, and synthesize rather than concatenate. Spend falsification where it matters: send the numerical_falsifier at key claims and decisive benchmarks, not at every step.
 
 Before acceptance, require an adversarial pass: try to falsify correctness and scaling, identify regimes where the baseline wins, and distinguish measurement from projection. Rank candidates by scientific validity and scaling value, then accelerator performance, and only then software convenience.

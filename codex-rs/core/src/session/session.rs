@@ -1554,17 +1554,32 @@ impl Session {
                     codex_agent_profiles::ProfileCapability::JobMonitor,
                 )
             {
+                let job_store_dir = config
+                    .codex_home
+                    .as_path()
+                    .join("jobs")
+                    .join(sess.thread_id.to_string());
+                // Brief a resumed session on jobs it was already tracking.
+                if let Ok(records) = codex_job_monitor::JobRecord::load_all(&job_store_dir).await
+                    && !records.is_empty()
+                {
+                    sess.send_event_raw(Event {
+                        id: String::new(),
+                        msg: EventMsg::Warning(WarningEvent {
+                            message: crate::job_watcher::session_start_briefing(&records),
+                        }),
+                    })
+                    .await;
+                }
                 crate::job_watcher::spawn_job_watcher(crate::job_watcher::JobWatcherHandles {
                     thread_id: sess.thread_id,
-                    store_dir: config
-                        .codex_home
-                        .as_path()
-                        .join("jobs")
-                        .join(sess.thread_id.to_string()),
+                    store_dir: job_store_dir,
                     agent_status: sess.agent_status.subscribe(),
                     agent_control: sess.services.agent_control.clone(),
+                    session: Arc::downgrade(&sess),
                     check_in: config.jobs_check_in_seconds.map(std::time::Duration::from_secs),
                     max_auto_continues: config.jobs_max_auto_continues,
+                    compact_before_wake: config.jobs_compact_before_wake,
                 });
             }
             let session_start_source = match &initial_history {

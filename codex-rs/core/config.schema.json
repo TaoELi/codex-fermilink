@@ -1797,6 +1797,40 @@
       },
       "type": "object"
     },
+    "JobsToml": {
+      "additionalProperties": false,
+      "description": "Deterministic job-monitoring settings (fermilink fork), used by agent profiles with the JobMonitor capability.",
+      "properties": {
+        "auto_continue": {
+          "description": "Wake the idle agent automatically when an attached job completes or its logs turn suspicious. Defaults to true.",
+          "type": "boolean"
+        },
+        "check_in_seconds": {
+          "description": "Optional interval, in seconds, for periodic \"still running\" check-in wake-ups while jobs are active and the agent is idle. Off by default.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "compact_before_wake": {
+          "description": "Compact the conversation history before an automatic wake-up when the context has grown large. Long jobs outlive the provider prompt cache, so wake turns on a big history are billed at full input price; the summary plus the durable `memory.md` keep the wake turn cheap. Defaults to true.",
+          "type": "boolean"
+        },
+        "max_auto_continues": {
+          "description": "Upper bound on automatic wake-ups per session (default 50), bounding runaway submit/wake loops.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "watch_patterns": {
+          "description": "Extra regexes scanned in every attached job's log tails alongside the built-in failure patterns; matches wake the agent. Per-campaign patterns are better passed to `job_attach` directly.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
     "KeybindingsSpec": {
       "anyOf": [
         {
@@ -5556,7 +5590,7 @@
   "description": "Base config deserialized from ~/.codex/config.toml.",
   "properties": {
     "agent_profile": {
-      "description": "Agent profile applied to newly created threads (fermilink fork). `\"default\"` (or unset) keeps the shipped Codex instructions; the scientific profiles (`\"scientific-algorithm\"`, `\"scientific-simulations\"`, `\"scientific-measurements\"`) replace them with built-in research prompts and bundle subagent roles.",
+      "description": "Agent profile applied to newly created threads (fermilink fork). `\"default\"` (or unset) keeps the shipped Codex instructions; the scientific profiles (`\"scientific-algorithm\"`, `\"scientific-simulations\"`, `\"scientific-measurements\"`) replace them with built-in research prompts and bundle subagent roles. The legacy `agent_mode` key is migrated via the config key-alias table.",
       "type": "string"
     },
     "agents": {
@@ -6252,6 +6286,14 @@
     "instructions": {
       "description": "System instructions.",
       "type": "string"
+    },
+    "jobs": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/JobsToml"
+        }
+      ],
+      "description": "Deterministic job-monitoring behavior for profiles with the JobMonitor capability (fermilink fork)."
     },
     "log_dir": {
       "allOf": [

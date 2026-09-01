@@ -691,6 +691,12 @@ pub struct Config {
     /// Upper bound on automatic job-watcher wake-ups per session.
     pub jobs_max_auto_continues: u32,
 
+    /// User-level extra log-watch regexes merged into every job attach.
+    pub jobs_watch_patterns: Vec<String>,
+
+    /// Compact large histories before automatic job-watcher wake-ups.
+    pub jobs_compact_before_wake: bool,
+
     /// Developer instructions override injected as a separate message.
     pub developer_instructions: Option<String>,
 
@@ -4193,6 +4199,16 @@ impl Config {
                 .as_ref()
                 .and_then(|jobs| jobs.max_auto_continues)
                 .unwrap_or(50),
+            jobs_watch_patterns: cfg
+                .jobs
+                .as_ref()
+                .and_then(|jobs| jobs.watch_patterns.clone())
+                .unwrap_or_default(),
+            jobs_compact_before_wake: cfg
+                .jobs
+                .as_ref()
+                .and_then(|jobs| jobs.compact_before_wake)
+                .unwrap_or(true),
             personality,
             developer_instructions,
             compact_prompt,

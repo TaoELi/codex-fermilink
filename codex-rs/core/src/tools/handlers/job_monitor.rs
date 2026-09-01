@@ -19,13 +19,17 @@ use crate::tools::registry::ToolExecutor;
 use codex_extension_items::ExtensionItem;
 use codex_extension_items::sleep::SleepItem;
 use codex_job_monitor::INITIAL_POLL_INTERVAL;
+use codex_job_monitor::JobPhase;
 use codex_job_monitor::JobRecord;
 use codex_job_monitor::JobSnapshot;
 use codex_job_monitor::JobTarget;
-use codex_job_monitor::MAX_POLL_INTERVAL;
+use codex_job_monitor::OVERRUN_WAKE_RATIO;
 use codex_job_monitor::UNKNOWN_CONSECUTIVE_LIMIT;
+use codex_job_monitor::WakePolicy;
 use codex_job_monitor::next_poll_interval;
+use codex_job_monitor::parse_expected_runtime;
 use codex_job_monitor::snapshot_job;
+use codex_job_monitor::validate_watch_pattern;
 use codex_protocol::items::TurnItem;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::WarningEvent;
@@ -64,9 +68,19 @@ fn job_field_schema() -> (String, JsonSchema) {
     (
         "job".to_string(),
         JsonSchema::string(Some(
-            "Job to act on: `slurm:<job-id>` for a scheduler job or `pid:<pid>` for a detached process (the real process, not a wrapper shell).".to_string(),
+            "Job to act on: `slurm:<job-id>` for a scheduler job (an array parent ID tracks all of its tasks) or `pid:<pid>` for a detached process (the real process, not a wrapper shell).".to_string(),
         )),
     )
+}
+
+fn format_duration_secs(seconds: u64) -> String {
+    if seconds < 120 {
+        format!("{seconds}s")
+    } else if seconds < 7200 {
+        format!("{}m", seconds / 60)
+    } else {
+        format!("{:.1}h", seconds as f64 / 3600.0)
+    }
 }
 
 fn format_snapshot(snapshot: &JobSnapshot) -> String {
@@ -81,9 +95,27 @@ fn format_snapshot(snapshot: &JobSnapshot) -> String {
         text,
         "{}{label}: {} [{:?}]",
         snapshot.record.target.display(),
-        snapshot.state.token,
+        snapshot.state.display(),
         snapshot.state.phase,
     );
+    if let Some(expected) = snapshot.record.expected_runtime_seconds
+        && !snapshot.state.is_terminal()
+        && let Some(started) = snapshot.record.run_started_at()
+    {
+        let elapsed = (chrono::Utc::now() - started).num_seconds().max(0) as u64;
+        let ratio = elapsed as f64 / expected as f64;
+        let overdue = if ratio >= OVERRUN_WAKE_RATIO {
+            format!(" — {ratio:.1}x over; check for a hang")
+        } else {
+            String::new()
+        };
+        let _ = writeln!(
+            text,
+            "runtime: {} of ~{} expected{overdue}",
+            format_duration_secs(elapsed),
+            format_duration_secs(expected),
+        );
+    }
     let history: Vec<String> = snapshot
         .record
         .history
@@ -129,11 +161,20 @@ pub struct JobAttachHandler;
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct JobAttachArgs {
-    job: String,
+    #[serde(default)]
+    job: Option<String>,
+    #[serde(default)]
+    jobs: Option<Vec<String>>,
     #[serde(default)]
     label: Option<String>,
     #[serde(default)]
     log_paths: Option<Vec<String>>,
+    #[serde(default)]
+    expected_runtime: Option<String>,
+    #[serde(default)]
+    watch_patterns: Option<Vec<String>>,
+    #[serde(default)]
+    wake_policy: Option<String>,
 }
 
 impl ToolExecutor<ToolInvocation> for JobAttachHandler {
@@ -144,6 +185,13 @@ impl ToolExecutor<ToolInvocation> for JobAttachHandler {
     fn spec(&self) -> ToolSpec {
         let mut properties = BTreeMap::from([job_field_schema()]);
         properties.insert(
+            "jobs".to_string(),
+            JsonSchema::array(
+                JsonSchema::string(None),
+                Some("Attach a whole sweep in one call: several `slurm:<id>`/`pid:<pid>` specs. Defaults them to `batch` waking (failures wake immediately; completions wake when the whole sweep is done).".to_string()),
+            ),
+        );
+        properties.insert(
             "label".to_string(),
             JsonSchema::string(Some(
                 "Short human label for the job, e.g. `meep production N=4096`.".to_string(),
@@ -153,17 +201,36 @@ impl ToolExecutor<ToolInvocation> for JobAttachHandler {
             "log_paths".to_string(),
             JsonSchema::array(
                 JsonSchema::string(None),
-                Some("Absolute paths of log or output files to tail and scan for failures while awaiting.".to_string()),
+                Some("Absolute paths of log or output files to tail and scan while awaiting. With `jobs`, pass one path per job (same order) or none.".to_string()),
             ),
+        );
+        properties.insert(
+            "expected_runtime".to_string(),
+            JsonSchema::string(Some(
+                "Expected wall-clock runtime once running, e.g. `90s`, `45m`, `6h`. A job running far past this is reported once as suspicious (possible hang).".to_string(),
+            )),
+        );
+        properties.insert(
+            "watch_patterns".to_string(),
+            JsonSchema::array(
+                JsonSchema::string(None),
+                Some("Extra regexes scanned in log tails alongside the built-in failure patterns (NaN, OOM, crash). Add campaign-specific anomalies worth waking for, e.g. `Fermi level not converged`.".to_string()),
+            ),
+        );
+        properties.insert(
+            "wake_policy".to_string(),
+            JsonSchema::string(Some(
+                "`each` (default for a single job): completion wakes on its own. `batch` (default for a `jobs` sweep): failures wake immediately, completions wake when every batch job is terminal.".to_string(),
+            )),
         );
         namespace_tool(ResponsesApiTool {
             name: "job_attach".to_string(),
-            description: "Register an already-submitted long-running job for deterministic monitoring. Submit via the shell first; then attach the SLURM job ID or the detached process PID together with its log paths. Returns the initial state; a job that is already dead should be debugged, not awaited.".to_string(),
+            description: "Register already-submitted long-running jobs for deterministic monitoring. Submit via the shell first; then attach the SLURM job ID (an array parent ID like `slurm:12345` tracks every task) or the detached process PID, with log paths. For a parameter sweep, attach all jobs in one call via `jobs`. Returns the initial state; a job that is already dead should be debugged, not awaited.".to_string(),
             strict: false,
             defer_loading: None,
             parameters: JsonSchema::object(
                 properties,
-                Some(vec!["job".to_string()]),
+                /*required*/ None,
                 /*additional_properties*/ Some(false.into()),
             ),
             output_schema: None,
@@ -191,32 +258,113 @@ impl ToolExecutor<ToolInvocation> for JobAttachHandler {
                 ));
             };
             let args: JobAttachArgs = parse_arguments(&arguments)?;
-            let target = JobTarget::parse(&args.job).map_err(FunctionCallError::RespondToModel)?;
-            let log_paths = args
-                .log_paths
-                .unwrap_or_default()
-                .into_iter()
-                .map(PathBuf::from)
-                .collect();
-            let store = store_dir(session.thread_id, &turn.config.codex_home);
-            let record = JobRecord::new(target, args.label, log_paths);
-            let snapshot = snapshot_job(&store, record).await.map_err(|err| {
-                FunctionCallError::RespondToModel(format!("failed to persist job record: {err}"))
-            })?;
-            if snapshot.state.is_terminal() {
-                // The attach reply is the notification: keep the session job
-                // watcher from waking the agent again for this dead job.
-                let mut record = snapshot.record.clone();
-                record.notified_at = Some(chrono::Utc::now());
-                if let Err(err) = record.save(&store).await {
-                    tracing::warn!(%err, "failed to persist attach-time notification state");
+            let specs: Vec<String> = match (&args.job, &args.jobs) {
+                (Some(job), None) => vec![job.clone()],
+                (None, Some(jobs)) if !jobs.is_empty() => jobs.clone(),
+                _ => {
+                    return Err(FunctionCallError::RespondToModel(
+                        "pass exactly one of `job` (single) or a non-empty `jobs` list (sweep)"
+                            .to_string(),
+                    ));
+                }
+            };
+            let targets = specs
+                .iter()
+                .map(|spec| JobTarget::parse(spec))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(FunctionCallError::RespondToModel)?;
+
+            // With one job, all log paths belong to it; with a sweep, pair
+            // one path per job by position.
+            let log_paths_arg = args.log_paths.unwrap_or_default();
+            let per_job_logs: Vec<Vec<PathBuf>> = if targets.len() == 1 {
+                vec![log_paths_arg.iter().map(PathBuf::from).collect()]
+            } else if log_paths_arg.is_empty() {
+                vec![Vec::new(); targets.len()]
+            } else if log_paths_arg.len() == targets.len() {
+                log_paths_arg
+                    .iter()
+                    .map(|path| vec![PathBuf::from(path)])
+                    .collect()
+            } else {
+                return Err(FunctionCallError::RespondToModel(format!(
+                    "with a `jobs` sweep, pass one log path per job in the same order ({} paths for {} jobs)",
+                    log_paths_arg.len(),
+                    targets.len()
+                )));
+            };
+
+            let mut watch_patterns = args.watch_patterns.unwrap_or_default();
+            for pattern in &watch_patterns {
+                validate_watch_pattern(pattern).map_err(FunctionCallError::RespondToModel)?;
+            }
+            // User-level config patterns join every attach; invalid ones are
+            // skipped rather than blocking the tool.
+            for pattern in &turn.config.jobs_watch_patterns {
+                if validate_watch_pattern(pattern).is_ok() && !watch_patterns.contains(pattern) {
+                    watch_patterns.push(pattern.clone());
                 }
             }
-            let mut text = format!("Attached {}.\n", snapshot.record.target.display());
-            text.push_str(&format_snapshot(&snapshot));
-            if snapshot.state.is_terminal() {
+
+            let expected_runtime_seconds = args
+                .expected_runtime
+                .as_deref()
+                .map(parse_expected_runtime)
+                .transpose()
+                .map_err(FunctionCallError::RespondToModel)?;
+
+            let wake_policy = match args.wake_policy.as_deref() {
+                None if targets.len() > 1 => WakePolicy::Batch,
+                None => WakePolicy::Each,
+                Some("each") => WakePolicy::Each,
+                Some("batch") => WakePolicy::Batch,
+                Some(other) => {
+                    return Err(FunctionCallError::RespondToModel(format!(
+                        "invalid wake_policy `{other}`; use `each` or `batch`"
+                    )));
+                }
+            };
+
+            let store = store_dir(session.thread_id, &turn.config.codex_home);
+            let multi = targets.len() > 1;
+            let mut text = String::new();
+            let mut any_terminal = false;
+            for (index, (target, log_paths)) in targets.into_iter().zip(per_job_logs).enumerate() {
+                let label = match (&args.label, multi) {
+                    (Some(label), true) => Some(format!("{label} [{}]", index + 1)),
+                    (Some(label), false) => Some(label.clone()),
+                    (None, _) => None,
+                };
+                let mut record = JobRecord::new(target, label, log_paths);
+                record.wake_policy = wake_policy;
+                record.expected_runtime_seconds = expected_runtime_seconds;
+                record.watch_patterns = watch_patterns.clone();
+                let snapshot = snapshot_job(&store, record).await.map_err(|err| {
+                    FunctionCallError::RespondToModel(format!(
+                        "failed to persist job record: {err}"
+                    ))
+                })?;
+                if snapshot.state.is_terminal() {
+                    any_terminal = true;
+                    // The attach reply is the notification: keep the session
+                    // job watcher from waking the agent again for this dead
+                    // job.
+                    let mut record = snapshot.record.clone();
+                    record.notified_at = Some(chrono::Utc::now());
+                    if let Err(err) = record.save(&store).await {
+                        tracing::warn!(%err, "failed to persist attach-time notification state");
+                    }
+                }
+                let _ = writeln!(text, "Attached {}.", snapshot.record.target.display());
+                text.push_str(&format_snapshot(&snapshot));
+            }
+            if any_terminal {
                 text.push_str(
-                    "\nThe job is already terminal: diagnose or resubmit instead of awaiting.\n",
+                    "\nA job is already terminal: diagnose or resubmit instead of awaiting.\n",
+                );
+            } else if multi || wake_policy == WakePolicy::Batch {
+                text.push_str(
+                    "\nCall jobs.job_await to wait; batch jobs return on first failure, suspicious logs, or when the whole sweep is done.\n",
                 );
             } else {
                 text.push_str("\nCall jobs.job_await to wait for completion.\n");
@@ -361,7 +509,7 @@ impl ToolExecutor<ToolInvocation> for JobAwaitHandler {
         );
         namespace_tool(ResponsesApiTool {
             name: "job_await".to_string(),
-            description: "Wait for attached jobs with deterministic, adaptive polling (no agent turns are spent while waiting). Returns when a job reaches a terminal state, a suspicious log line appears (NaN, divergence, OOM, crash), the scheduler stops answering, new user input arrives, or the wait budget elapses. If you instead end your turn with jobs running, a deterministic watcher wakes you when they complete.".to_string(),
+            description: "Wait for attached jobs with deterministic, adaptive polling (no agent turns are spent while waiting). Returns when a job reaches a terminal state (batch/sweep jobs: on first failure or once the whole sweep is done), a suspicious or watched log line appears (NaN, OOM, crash, your watch_patterns), a job runs far past its expected_runtime, the scheduler stops answering, new user input arrives, or the wait budget elapses. If you instead end your turn with jobs running, a deterministic watcher wakes you when they complete.".to_string(),
             strict: false,
             defer_loading: None,
             parameters: JsonSchema::object(
@@ -440,11 +588,15 @@ impl ToolExecutor<ToolInvocation> for JobAwaitHandler {
             session
                 .emit_turn_item_started(turn.as_ref(), &await_item)
                 .await;
-            let waiting_on = records
+            let mut waiting_on = records
                 .iter()
+                .take(5)
                 .map(|record| record.target.display())
                 .collect::<Vec<_>>()
                 .join(", ");
+            if records.len() > 5 {
+                let _ = write!(waiting_on, " and {} more", records.len() - 5);
+            }
             session
                 .send_event(
                     turn.as_ref(),
@@ -521,15 +673,43 @@ impl ToolExecutor<ToolInvocation> for JobAwaitHandler {
                     }
                 }
 
-                if let Some(terminal) = snapshots
+                // Batch (sweep) awaits return early only for failures or
+                // suspicious logs; plain completions return once the whole
+                // batch is terminal.
+                let batch_mode = snapshots
                     .iter()
-                    .find(|snapshot| snapshot.state.is_terminal())
-                {
-                    stop_reason = Some(format!(
-                        "{} reached terminal state {}",
-                        terminal.record.target.display(),
-                        terminal.state.token
-                    ));
+                    .all(|snapshot| snapshot.record.wake_policy == WakePolicy::Batch);
+                let terminal_stop = if batch_mode {
+                    snapshots
+                        .iter()
+                        .find(|snapshot| matches!(snapshot.state.phase, JobPhase::Failed))
+                        .or_else(|| {
+                            snapshots
+                                .iter()
+                                .all(|snapshot| snapshot.state.is_terminal())
+                                .then(|| snapshots.first())
+                                .flatten()
+                        })
+                } else {
+                    snapshots
+                        .iter()
+                        .find(|snapshot| snapshot.state.is_terminal())
+                };
+                if let Some(terminal) = terminal_stop {
+                    stop_reason = Some(
+                        if batch_mode
+                            && snapshots.len() > 1
+                            && !matches!(terminal.state.phase, JobPhase::Failed)
+                        {
+                            format!("all {} batch jobs reached terminal states", snapshots.len())
+                        } else {
+                            format!(
+                                "{} reached terminal state {}",
+                                terminal.record.target.display(),
+                                terminal.state.display()
+                            )
+                        },
+                    );
                 } else if let Some(suspicious) = snapshots
                     .iter()
                     .find(|snapshot| snapshot.has_suspicious_logs())
@@ -537,6 +717,13 @@ impl ToolExecutor<ToolInvocation> for JobAwaitHandler {
                     stop_reason = Some(format!(
                         "suspicious log lines appeared for {}",
                         suspicious.record.target.display()
+                    ));
+                } else if let Some((overdue, ratio)) = snapshots.iter().find_map(|snapshot| {
+                    snapshot.unreported_overrun().map(|ratio| (snapshot, ratio))
+                }) {
+                    stop_reason = Some(format!(
+                        "{} has been running {ratio:.1}x its expected runtime; check for a hang",
+                        overdue.record.target.display()
                     ));
                 } else if consecutive_unknown >= UNKNOWN_CONSECUTIVE_LIMIT {
                     stop_reason = Some(format!(
@@ -581,10 +768,11 @@ impl ToolExecutor<ToolInvocation> for JobAwaitHandler {
                 .await;
 
             // The await's own return is the notification for anything
-            // terminal or suspicious it observed; keep the session job
-            // watcher from waking the agent again for the same outcome.
+            // terminal, suspicious, or overdue it observed; keep the session
+            // job watcher from waking the agent again for the same outcome.
             for snapshot in &snapshots {
-                if !snapshot.state.is_terminal() && !snapshot.has_suspicious_logs() {
+                let overrun = snapshot.unreported_overrun().is_some();
+                if !snapshot.state.is_terminal() && !snapshot.has_suspicious_logs() && !overrun {
                     continue;
                 }
                 let mut record = snapshot.record.clone();
@@ -594,6 +782,9 @@ impl ToolExecutor<ToolInvocation> for JobAwaitHandler {
                 if snapshot.has_suspicious_logs() {
                     record.suspicious_signature =
                         Some(crate::job_watcher::suspicious_signature(snapshot));
+                }
+                if overrun {
+                    record.overrun_notified = true;
                 }
                 if let Err(err) = record.save(&store).await {
                     tracing::warn!(%err, "failed to persist await notification state");

@@ -163,6 +163,16 @@ pub struct JobsToml {
     /// Upper bound on automatic wake-ups per session (default 50), bounding
     /// runaway submit/wake loops.
     pub max_auto_continues: Option<u32>,
+    /// Extra regexes scanned in every attached job's log tails alongside the
+    /// built-in failure patterns; matches wake the agent. Per-campaign
+    /// patterns are better passed to `job_attach` directly.
+    pub watch_patterns: Option<Vec<String>>,
+    /// Compact the conversation history before an automatic wake-up when the
+    /// context has grown large. Long jobs outlive the provider prompt cache,
+    /// so wake turns on a big history are billed at full input price; the
+    /// summary plus the durable `memory.md` keep the wake turn cheap.
+    /// Defaults to true.
+    pub compact_before_wake: Option<bool>,
 }
 
 /// Base config deserialized from ~/.codex/config.toml.

@@ -69,6 +69,22 @@ pub struct StateObservation {
     pub state: JobState,
 }
 
+/// When a job's plain completion should wake the idle agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WakePolicy {
+    /// Wake or return as soon as this job alone reaches a terminal state.
+    #[default]
+    Each,
+    /// Sweep member: failures and suspicious logs still wake immediately, but
+    /// plain completions wait until every batch job is terminal.
+    Batch,
+}
+
+/// Bounded state history; an array whose tasks finish one by one would
+/// otherwise grow a record without limit.
+const HISTORY_CAP: usize = 100;
+
 /// A monitored job's durable record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JobRecord {
@@ -91,6 +107,20 @@ pub struct JobRecord {
     /// idle polls do not re-wake the agent for the same lines.
     #[serde(default)]
     pub suspicious_signature: Option<String>,
+    /// Whether this job wakes on its own completion or with its batch.
+    #[serde(default)]
+    pub wake_policy: WakePolicy,
+    /// Expected wall-clock runtime once running; large overruns are reported
+    /// once as suspicious instead of waiting out the whole budget.
+    #[serde(default)]
+    pub expected_runtime_seconds: Option<u64>,
+    /// Extra regexes scanned in log tails alongside the built-in failure
+    /// patterns, so domain anomalies become wake events.
+    #[serde(default)]
+    pub watch_patterns: Vec<String>,
+    /// Set once the agent has been informed of an expected-runtime overrun.
+    #[serde(default)]
+    pub overrun_notified: bool,
 }
 
 impl JobRecord {
@@ -103,6 +133,10 @@ impl JobRecord {
             history: Vec::new(),
             notified_at: None,
             suspicious_signature: None,
+            wake_policy: WakePolicy::default(),
+            expected_runtime_seconds: None,
+            watch_patterns: Vec::new(),
+            overrun_notified: false,
         }
     }
 
@@ -113,7 +147,31 @@ impl JobRecord {
                 at: Utc::now(),
                 state,
             });
+            if self.history.len() > HISTORY_CAP {
+                let excess = self.history.len() - HISTORY_CAP;
+                self.history.drain(..excess);
+            }
         }
+    }
+
+    /// When the job was first observed `RUNNING`; scheduler queue time does
+    /// not count toward the expected runtime.
+    pub fn run_started_at(&self) -> Option<DateTime<Utc>> {
+        self.history
+            .iter()
+            .find(|observation| observation.state.token == "RUNNING")
+            .map(|observation| observation.at)
+    }
+
+    /// Elapsed runtime as a multiple of the expected runtime, once the job
+    /// has been observed running and an expectation was given.
+    pub fn runtime_ratio(&self, now: DateTime<Utc>) -> Option<f64> {
+        let expected = self
+            .expected_runtime_seconds
+            .filter(|seconds| *seconds > 0)?;
+        let started = self.run_started_at()?;
+        let elapsed = (now - started).num_seconds().max(0) as f64;
+        Some(elapsed / expected as f64)
     }
 
     pub fn latest_state(&self) -> Option<&JobState> {
@@ -154,7 +212,7 @@ impl JobRecord {
                 records.push(record);
             }
         }
-        records.sort_by(|a, b| b.attached_at.cmp(&a.attached_at));
+        records.sort_by_key(|record| std::cmp::Reverse(record.attached_at));
         Ok(records)
     }
 }

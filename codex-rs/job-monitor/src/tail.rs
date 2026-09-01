@@ -30,17 +30,40 @@ pub struct LogTail {
     pub suspicious_lines: Vec<String>,
 }
 
+/// Validates one user-supplied watch pattern, so a bad regex fails loudly at
+/// attach time instead of being silently unable to match.
+pub fn validate_watch_pattern(pattern: &str) -> Result<(), String> {
+    Regex::new(pattern)
+        .map(|_| ())
+        .map_err(|err| format!("invalid watch pattern `{pattern}`: {err}"))
+}
+
+/// Compiles per-job watch patterns, skipping any that no longer compile
+/// (they were validated at attach; a skip only loses an extra pattern).
+pub fn compile_watch_patterns(patterns: &[String]) -> Vec<Regex> {
+    patterns
+        .iter()
+        .filter_map(|pattern| Regex::new(pattern).ok())
+        .collect()
+}
+
 /// Reads the last [`TAIL_BYTES`] of `path`, resynchronized to a line start,
 /// and scans it for suspicious lines. Missing files yield an empty tail so a
 /// job that has not created its log yet is not an error.
 pub async fn read_log_tail(path: &Path) -> LogTail {
-    let (file_len, tail) = match read_tail_bytes(path).await {
-        Ok(result) => result,
-        Err(_) => (0, String::new()),
-    };
+    read_log_tail_with_patterns(path, &[]).await
+}
+
+/// [`read_log_tail`], with extra per-job patterns scanned alongside the
+/// built-in failure events.
+pub async fn read_log_tail_with_patterns(path: &Path, extra_patterns: &[Regex]) -> LogTail {
+    let (file_len, tail) = read_tail_bytes(path).await.unwrap_or_default();
     let suspicious_lines = tail
         .lines()
-        .filter(|line| SUSPICIOUS_EVENT.is_match(line))
+        .filter(|line| {
+            SUSPICIOUS_EVENT.is_match(line)
+                || extra_patterns.iter().any(|pattern| pattern.is_match(line))
+        })
         .map(str::to_owned)
         .collect();
     LogTail {

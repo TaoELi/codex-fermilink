@@ -18,11 +18,15 @@ pub enum JobPhase {
     Unknown,
 }
 
-/// A normalized SLURM state token plus its coarse phase.
+/// A normalized SLURM state token plus its coarse phase. For job arrays the
+/// classifying token follows the usual precedence while `detail` carries the
+/// per-task state counts (e.g. `7×RUNNING, 3×PENDING, 2×COMPLETED`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JobState {
     pub token: String,
     pub phase: JobPhase,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 impl JobState {
@@ -30,6 +34,7 @@ impl JobState {
         Self {
             token: "UNKNOWN".to_string(),
             phase: JobPhase::Unknown,
+            detail: None,
         }
     }
 
@@ -37,6 +42,7 @@ impl JobState {
         Self {
             token: "COMPLETED".to_string(),
             phase: JobPhase::Completed,
+            detail: None,
         }
     }
 
@@ -44,6 +50,7 @@ impl JobState {
         Self {
             token: token.to_string(),
             phase: JobPhase::Active,
+            detail: None,
         }
     }
 
@@ -51,11 +58,20 @@ impl JobState {
         Self {
             token: token.to_string(),
             phase: JobPhase::Failed,
+            detail: None,
         }
     }
 
     pub fn is_terminal(&self) -> bool {
         matches!(self.phase, JobPhase::Completed | JobPhase::Failed)
+    }
+
+    /// The token plus the array-task counts when present.
+    pub fn display(&self) -> String {
+        match &self.detail {
+            Some(detail) => format!("{} ({detail})", self.token),
+            None => self.token.clone(),
+        }
     }
 }
 
@@ -142,26 +158,67 @@ pub fn normalize_state_token(raw: &str) -> Option<String> {
 
 /// Classifies a set of per-step states into one job state: failure outranks
 /// active, which outranks completed; no recognizable state means unknown.
+/// With more than one state (a job array), `detail` carries the counts.
 pub fn classify_states(states: &[String]) -> JobState {
-    for state in states {
-        if SLURM_FAILURE_STATES.contains(&state.as_str()) {
-            return JobState::failed(state);
+    let mut classified = 'classify: {
+        for state in states {
+            if SLURM_FAILURE_STATES.contains(&state.as_str()) {
+                break 'classify JobState::failed(state);
+            }
         }
-    }
-    for state in states {
-        if SLURM_ACTIVE_STATES.contains(&state.as_str()) {
-            return JobState::active(state);
+        for state in states {
+            if SLURM_ACTIVE_STATES.contains(&state.as_str()) {
+                break 'classify JobState::active(state);
+            }
         }
+        if states.iter().any(|state| state == "COMPLETED") {
+            break 'classify JobState::completed();
+        }
+        JobState::unknown()
+    };
+    classified.detail = state_counts_detail(states);
+    classified
+}
+
+/// `7×RUNNING, 3×PENDING` for multi-state (array) observations; `None` for
+/// zero or one state, where the token already says everything.
+fn state_counts_detail(states: &[String]) -> Option<String> {
+    if states.len() < 2 {
+        return None;
     }
-    if states.iter().any(|state| state == "COMPLETED") {
-        return JobState::completed();
+    let mut counts = std::collections::BTreeMap::<&str, usize>::new();
+    for state in states {
+        *counts.entry(state.as_str()).or_default() += 1;
     }
-    JobState::unknown()
+    Some(
+        counts
+            .iter()
+            .map(|(state, count)| format!("{count}\u{d7}{state}"))
+            .collect::<Vec<_>>()
+            .join(", "),
+    )
+}
+
+/// Whether a sacct `JobID` column value belongs to `job_id`: the job itself,
+/// or — when `job_id` is an array parent — one of its tasks (`123_7`, and the
+/// `123_[8-20]` form sacct uses for still-pending task ranges). Step rows
+/// (`123.batch`, `123_7.extern`) are excluded so a failed prolog step cannot
+/// mask the allocation's state precedence rules.
+fn sacct_row_matches(job_token: &str, job_id: &str) -> bool {
+    if job_token == job_id {
+        return true;
+    }
+    job_token
+        .strip_prefix(job_id)
+        .and_then(|rest| rest.strip_prefix('_'))
+        .is_some_and(|task| {
+            !task.is_empty() && (task.chars().all(|c| c.is_ascii_digit()) || task.starts_with('['))
+        })
 }
 
 /// Parses `sacct -n -P -o JobID,State` output and classifies the states that
-/// belong to `job_id` exactly (steps like `123.batch` are ignored so a failed
-/// prolog step cannot mask the allocation's state precedence rules).
+/// belong to `job_id`: its own rows, plus every task row when the ID names a
+/// job array parent.
 pub fn classify_sacct_output(stdout: &str, job_id: &str) -> JobState {
     let mut states = Vec::new();
     for line in stdout.lines() {
@@ -169,7 +226,7 @@ pub fn classify_sacct_output(stdout: &str, job_id: &str) -> JobState {
         let (Some(job_token), Some(state_raw)) = (parts.next(), parts.next()) else {
             continue;
         };
-        if job_token.trim() != job_id {
+        if !sacct_row_matches(job_token.trim(), job_id) {
             continue;
         }
         if let Some(state) = normalize_state_token(state_raw) {
@@ -179,7 +236,8 @@ pub fn classify_sacct_output(stdout: &str, job_id: &str) -> JobState {
     classify_states(&states)
 }
 
-/// Parses `squeue -h -j <id> -o %T` output (one state token per line).
+/// Parses `squeue -h -j <id> -o %T` output (one state token per line; a job
+/// array yields one line per queued or running task).
 pub fn classify_squeue_output(stdout: &str) -> JobState {
     let states: Vec<String> = stdout.lines().filter_map(normalize_state_token).collect();
     classify_states(&states)

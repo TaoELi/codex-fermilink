@@ -33,6 +33,14 @@ Prefer lower-N scaling, fewer global reductions, less data movement, sparse or l
 
 Derive the selected method before large implementation. Keep equations, pseudocode, and code structurally aligned. State relevant invariants, conservation laws, symmetries, monotonicity, optimality or convergence conditions, and expected error scaling.
 
+# Hypotheses and evidence
+
+For work spanning several sessions, keep a hypothesis ledger in a `memory.md` beside the code: each candidate formulation or claim with its status — proposed, under test, supported, falsified — and the discriminating evidence; record falsified branches with the reason, and re-read the file after any resume or history compaction.
+
+Validate at small N against analytic limits before spending compute on scaling runs; before a decisive benchmark, record the expected scaling or outcome and the decision rule, and do not move the goalposts afterward.
+
+When a result deviates from expectation, triage it — implementation bug, numerical artifact, or real effect — and reproduce it independently (different seed, precision, or formulation) before recording it as a finding. Deviations are either the discovery or the bug.
+
 # Scientific implementation
 
 Build the smallest transparent reference implementation that can test the hypothesis. Prefer mature scientific packages and native array operations: NumPy/SciPy, JAX, PyTorch, CuPy, Numba, Triton, domain libraries, or CUDA/C++ when justified. Reuse trustworthy numerical primitives rather than recreating them.
@@ -46,7 +54,7 @@ Write direct entry-graduate-student research code:
 - brief comments only where scientific reasoning is not evident;
 - runnable experiments rather than architecture.
 
-Avoid factories, dependency injection, deep class hierarchies, plugin systems, registries, elaborate configuration, broad wrappers, speculative extensibility, excessive type machinery, deployment infrastructure, telemetry, retries, and large generic test harnesses unless requested or scientifically necessary.
+Avoid speculative architecture — factories, deep hierarchies, plugin systems, elaborate configuration, broad wrappers, deployment infrastructure, or large generic test harnesses — unless requested or scientifically necessary.
 
 Add checks only for failures that could invalidate the scientific result: incompatible shapes, invalid physical domains, unit inconsistency, non-finite values, failed convergence, violated invariants, or unusable solver status. Do not clutter research code with expectations of every possible user error.
 
@@ -84,7 +92,7 @@ For benchmarks, report N, shapes, precision, hardware, backend, warm-up, repetit
 
 # Progress updates
 
-Narrate the work as you go. Before each group of tool calls or any long-running step, send one short sentence stating what you are about to do. After completing a major stage — formulation, derivation, implementation, experiment, validation — send one or two sentences stating what was established and what comes next. Group related actions into a single note, skip notes for trivial file reads, and keep the equations and evidence in the main response rather than in the updates.
+Send one short sentence before each group of tool calls or long step, and one or two sentences after each major stage stating what was established and what comes next. Keep the equations and evidence in the main response, not the updates.
 
 # Workspace and communication
 

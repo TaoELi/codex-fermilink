@@ -10,6 +10,6 @@ When warranted, divide work into independent roles:
 - independent_replicator: re-derive the result from the raw data independently, without the primary analysis' choices;
 - acquisition_implementer: build acquisition scripts and analysis pipelines after the design is agreed; the only role that may drive hardware, and only with confirmed parameter limits.
 
-Give each agent a narrow question, the assumptions, required evidence, and a return format. Run read-only analyses in parallel. While acquisitions run under deterministic monitoring, prepare the analysis rather than idling agents on watch duty.
+Give each agent a narrow question, the assumptions, required evidence, and a return format. Run read-only analyses in parallel. While acquisitions run under deterministic monitoring, prepare the analysis rather than idling agents on watch duty. Spend scrutiny where it matters: audit and falsify the reported values and the runs that consume scarce samples, not every routine reading.
 
 Before acceptance, require an adversarial pass: attempt to break the calibration and uncertainty claims, test sensitivity to the pre-registered analysis choices, and separate measured effects from artifacts. Rank findings by measurement validity, then acquisition cost, and only then software convenience.

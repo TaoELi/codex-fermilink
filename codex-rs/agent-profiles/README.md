@@ -140,19 +140,30 @@ delegation requests still work at any effort.
 The simulations and measurements profiles enable three tools backed by the
 `codex-job-monitor` crate (semantics ported from the FermiLink harness):
 
-- `jobs.job_attach` — register an already-submitted SLURM job
-  (`slurm:<id>`) or detached process (`pid:<pid>`) with its log paths. The
-  agent submits through the normal shell, so sandbox and approval machinery
-  apply to the submission; a wrapper's PID is not the job.
+- `jobs.job_attach` — register already-submitted work: a SLURM job
+  (`slurm:<id>`), a SLURM job array by its parent ID (per-task states are
+  aggregated — one failed task fails the array, counts like `7×RUNNING,
+  3×PENDING` ride along), a detached process (`pid:<pid>`), or a whole sweep
+  of independent jobs in one call (`jobs` list). Optional per-attach
+  settings: `log_paths`, `expected_runtime` (`90s`/`45m`/`6h`; a job running
+  ≥2× this is reported once as a possible hang), `watch_patterns` (extra
+  log regexes — domain anomalies become wake events), and `wake_policy`
+  (`each`, or `batch` — the sweep default — where failures wake immediately
+  but plain completions wait for the whole batch). The agent submits through
+  the normal shell, so sandbox and approval machinery apply to the
+  submission; a wrapper's PID is not the job.
 - `jobs.job_await` — park the turn while deterministic code polls `sacct`
   (falling back to `squeue`) or process liveness with adaptive backoff
   (15 s → 5 min), tailing logs for suspicious lines (NaN, divergence, OOM,
-  crashes). Returns on a terminal state, a suspicious log event, repeated
-  UNKNOWN scheduler answers, new user input, or a per-call wait budget
-  (default 30 min, max 12 h) — the agent burns no turns while waiting and
-  simply calls `job_await` again after a budget return.
-- `jobs.job_status` — instant snapshot of state history and bounded log
-  tails; the reattachment point after a session restart.
+  crashes, plus the job's watch patterns). Returns on a terminal state
+  (batch jobs: first failure or the whole sweep done), a suspicious log
+  event, an expected-runtime overrun, repeated UNKNOWN scheduler answers,
+  new user input, or a per-call wait budget (default 30 min, max 12 h) —
+  the agent burns no turns while waiting and simply calls `job_await` again
+  after a budget return.
+- `jobs.job_status` — instant snapshot of state history, runtime vs.
+  expectation, and bounded log tails; the reattachment point after a
+  session restart.
 
 Records persist under `$CODEX_HOME/jobs/<thread-id>/`, so a multi-day SLURM
 job survives closed laptops and resumed sessions.
@@ -167,17 +178,27 @@ If a turn ends while attached jobs are still active, a session-resident
 watcher (enabled by the JobMonitor capability) keeps polling with the same
 deterministic engine and wakes the idle agent by injecting a bounded
 `[job monitor]` message — which starts a new turn with full context — when a
-job reaches a terminal state or new suspicious log lines appear. Each
-terminal transition wakes at most once (`notified_at` on the job record; an
-await or attach that already reported the outcome also counts), interrupted
+job reaches a terminal state (batch jobs: first failure, or the whole sweep
+terminal), new suspicious or watched log lines appear, or a job overruns its
+expected runtime. Each outcome wakes at most once (`notified_at`,
+`suspicious_signature`, and `overrun_notified` on the job record; an await
+or attach that already reported the outcome also counts), interrupted
 sessions are never auto-resumed, and `jobs.max_auto_continues` bounds
-runaway loops. Configuration:
+runaway loops. A session that starts with tracked jobs (a resume) opens with
+a one-line `[jobs] N tracked job(s)…` briefing. Because long jobs outlive
+the provider prompt cache, a wake on a large history (≥50k tokens in the
+last request) first compacts the conversation — the wake turn then starts
+from the summary plus the durable `memory.md`, at a fraction of the cost;
+every compaction failure mode degrades to waking on the full history.
+Configuration:
 
 ```toml
 [jobs]
 auto_continue = true        # default; set false to disable the watcher
 check_in_seconds = 21600    # optional periodic "still running" wake-ups
 max_auto_continues = 50     # default cap on automatic wake-ups per session
+watch_patterns = ["not converged"]  # optional user-level log regexes
+compact_before_wake = true  # default; compact large histories before waking
 ```
 
 ## Adding a profile
@@ -225,7 +246,8 @@ feature". Rules that keep updates cheap:
 
    ```bash
    just test -p codex-job-monitor -p codex-agent-profiles -p codex-config
-   just test -p codex-core -p codex-models-manager agent_profile role_ \
+   RUST_MIN_STACK=16777216 just test -p codex-core -p codex-models-manager \
+       agent_profile role_ job_watcher \
        config_loader responses_lite model_switching force_standard
    just test -p codex-tui
    ```
@@ -233,6 +255,13 @@ feature". Rules that keep updates cheap:
    The upstream tests in that set are load-bearing for the fork:
    `responses_lite` and guardian tests guard the transport-forcing
    boundary; `model_switching` guards custom-provenance survival.
+   `RUST_MIN_STACK` matters on some machines: the debug-build integration
+   futures sit near the default 8 MB thread stack and SIGABRT without it.
+5. **Prompt evaluation suite.** Prompts regress under model and upstream
+   changes faster than code does. `fermilink-evals/` (repo root) holds
+   canned scientific tasks with deterministic graders and an A/B runner;
+   run it against the previous and the new binary before shipping prompt
+   or job-tool changes (see its README).
 5. **Drift to watch per release:** restructuring of `role.rs` or
    `spec_plan.rs` (the densest hooks); upstream changing custom-instruction
    transport semantics (which could shrink or retire
