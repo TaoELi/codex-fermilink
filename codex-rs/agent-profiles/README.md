@@ -37,14 +37,24 @@ always launches the fork.
 | Profile | Behavior |
 | --- | --- |
 | `default` | Shipped Codex instructions, byte-for-byte upstream behavior. |
-| `scientific-algorithm` | Hypothesis-first algorithm research prompt; five research subagent roles. |
+| `scientific-algorithm` | Hypothesis-first algorithm research prompt; five research subagent roles; job monitoring for long benchmarks. |
 | `scientific-simulations` | HPC simulation setup, convergence, checkpointing, and validation prompt; five simulation roles; job monitoring. |
 | `scientific-measurements` | Calibration, uncertainty, provenance, and experimental-design prompt; five measurement roles; job monitoring. |
 
 Each profile lives under `profiles/<id>/` as `prompt.md`, `multi_agent.md`,
 and `agents/*.toml`, all compiled into the binary. Prompts are compact
-(≈7 KB vs ≈20 KB shipped), written for entry-graduate-student research code,
-and include a minimal progress-update protocol.
+(≈9–11 KB vs ≈20 KB shipped), written for entry-graduate-student research
+code, and include a minimal progress-update protocol.
+
+All three scientific prompts share one memory convention: long work lives
+under a dated `projects/YYYY-MM-DD-short-name/` directory whose `memory.md`
+is the canonical state. The file starts with the original request verbatim
+and a `last_updated` timestamp, keeps a current-state-and-next-actions
+section that is rewritten in place (what a wake-up or resumed session acts
+from), and appends a dated step log below it, grouping machine-generated
+file families by pattern instead of listing each. The prompts mandate
+re-reading it after any resume or history compaction, which is what makes
+compact-before-wake (below) safe.
 
 ## Selecting a profile
 
@@ -137,8 +147,9 @@ delegation requests still work at any effort.
 
 ## Deterministic job monitoring (`ProfileCapability::JobMonitor`)
 
-The simulations and measurements profiles enable three tools backed by the
-`codex-job-monitor` crate (semantics ported from the FermiLink harness):
+All three scientific profiles (algorithm, simulations, measurements) enable
+three tools backed by the `codex-job-monitor` crate (semantics ported from
+the FermiLink harness):
 
 - `jobs.job_attach` — register already-submitted work: a SLURM job
   (`slurm:<id>`), a SLURM job array by its parent ID (per-task states are

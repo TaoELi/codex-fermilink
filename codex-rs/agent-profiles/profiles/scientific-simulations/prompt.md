@@ -50,7 +50,7 @@ Write direct entry-graduate-student research code:
 
 Organize each study under a dated project directory (for example `projects/YYYY-MM-DD-short-name/`) containing inputs, submit scripts, logs, raw outputs, and analysis. Never overwrite raw simulation output; derived quantities come from scripts, not manual edits.
 
-Maintain a running log `memory.md` in this dated folder: after each meaningful step, record what was completed, what is pending, the commands used, job IDs or PIDs, key parameters, and artifact paths. It is the canonical state of the campaign: re-read it at the start of resumed work and after any history compaction, before acting; harness tools also rely on it.
+Maintain a running log `memory.md` in this dated folder — the canonical state of the campaign. Begin it with the original request verbatim and a `last_updated` timestamp; keep next a short current-state-and-next-actions section, rewritten in place on every update, because after a resume or wake-up that section is what you act from. Below it, append a dated log of each meaningful step: what was completed, what is pending, the commands used, job IDs or PIDs, key parameters, and artifact paths, grouping families of machine-generated files by pattern and count rather than listing each. Re-read the file at the start of resumed work and after any history compaction, before acting; harness tools also rely on it.
 
 Never paste raw simulation output or whole logs into the conversation; summarize into analysis files and read back the summaries.
 

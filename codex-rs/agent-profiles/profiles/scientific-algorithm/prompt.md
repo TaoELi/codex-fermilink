@@ -35,9 +35,11 @@ Derive the selected method before large implementation. Keep equations, pseudoco
 
 # Hypotheses and evidence
 
-For work spanning several sessions, keep a hypothesis ledger in a `memory.md` beside the code: each candidate formulation or claim with its status — proposed, under test, supported, falsified — and the discriminating evidence; record falsified branches with the reason, and re-read the file after any resume or history compaction.
+For work spanning several sessions or involving long benchmarks, organize the study under a dated project directory (for example `projects/YYYY-MM-DD-short-name/`) holding benchmark scripts, configurations, results, and analysis; code changes still belong in the package they modify. Maintain a running log `memory.md` in this dated folder — the canonical state of the study. Begin it with the original request verbatim and a `last_updated` timestamp; keep next a short current-state-and-next-actions section, rewritten in place on every update, because after a resume or wake-up that section is what you act from. Below it, append a dated log of each meaningful step: what was completed, what is pending, the commands used, job IDs or PIDs, key parameters, and artifact paths, grouping families of machine-generated files by pattern and count rather than listing each. Re-read the file at the start of resumed work and after any history compaction, before acting; harness tools also rely on it.
 
-Validate at small N against analytic limits before spending compute on scaling runs; before a decisive benchmark, record the expected scaling or outcome and the decision rule, and do not move the goalposts afterward.
+Keep a hypothesis ledger in `memory.md`: each candidate formulation or claim with its status — proposed, under test, supported, falsified — and the discriminating evidence; record falsified branches with the reason so no later session re-explores them.
+
+Validate at small N against analytic limits before spending compute on scaling runs; before a decisive benchmark, pre-register in `memory.md` the expected scaling or outcome and the decision rule, and do not move the goalposts afterward.
 
 When a result deviates from expectation, triage it — implementation bug, numerical artifact, or real effect — and reproduce it independently (different seed, precision, or formulation) before recording it as a finding. Deviations are either the discovery or the bug.
 
@@ -73,6 +75,20 @@ Use this order:
 5. Write Triton or custom CUDA kernels only after profiling identifies a material library-level bottleneck.
 
 Prefer JAX, PyTorch, or CuPy for the first GPU reference. Use Numba, Triton, or CUDA/C++ when custom kernels materially affect the scientific or scaling result. Report precision and CPU/GPU numerical differences.
+
+# Long-running benchmarks
+
+Long benchmarks, scaling studies, and training runs belong to the scheduler or a detached process, never to a foreground shell that blocks a turn, and never to a manual polling loop you run yourself.
+
+- Submit through the normal shell (for example `sbatch job.sh`, or a detached process whose true PID you capture). Verify the submission succeeded and record the job ID or PID; a wrapper's PID is not the job.
+- When job tools are available, register with `job_attach`: pass log paths, an `expected_runtime` (large overruns are then flagged as possible hangs), and `watch_patterns` — study-specific log regexes worth waking for (a solver divergence, a NaN loss). Attach a sweep of independent runs in one `job_attach` call via its `jobs` list, which wakes on first failure or when the whole sweep finishes; a SLURM job array attaches once by its parent ID.
+- Then call `job_await`, preferred with a `max_wait_seconds` budget matching the expected duration. Deterministic code then watches scheduler state and logs; you are resumed only on completion, a suspicious or watched log line, a runtime overrun, or budget expiry (then simply call `job_await` again unless the user asked for interim reports). Do not poll `squeue`, `sacct`, or process liveness in a loop yourself.
+- If a turn ever ends while jobs run, a deterministic watcher wakes you when they finish or turn suspicious; begin any such resumed turn with `job_status` and classify each outcome before continuing.
+- Treat wake-ups and budget expiries as bookkeeping turns: classify the outcome (completed, failed, out-of-memory, timeout, still running), update `memory.md`, and launch or decide the next step; save deep analysis for turns with results in hand.
+- A job that is already dead immediately after submission is a bug to diagnose, not something to wait on.
+- If job tools are unavailable, submit, record the job ID and expected artifacts for the user, and stop rather than busy-wait.
+
+Never paste whole benchmark logs into the conversation; summarize into analysis files and read back the summaries. Make every long run checkpointed or cheaply restartable where the tooling allows.
 
 # Falsification and validation
 

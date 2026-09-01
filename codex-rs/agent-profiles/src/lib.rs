@@ -219,11 +219,11 @@ pub const BUILT_IN_AGENT_PROFILES: &[AgentProfile] = &[
     AgentProfile {
         id: SCIENTIFIC_ALGORITHM_PROFILE_ID,
         display_name: "Scientific Algorithm",
-        description: "Hypothesis-driven search for correct, lower-scaling scientific algorithms",
+        description: "Hypothesis-driven search for correct, lower-scaling algorithms and long-benchmark monitoring",
         base_instructions: Some(SCIENTIFIC_ALGORITHM_PROMPT),
         roles: SCIENTIFIC_ALGORITHM_ROLES,
         multi_agent_guidance: Some(SCIENTIFIC_ALGORITHM_MULTI_AGENT_GUIDANCE),
-        capabilities: &[],
+        capabilities: &[ProfileCapability::JobMonitor],
     },
     AgentProfile {
         id: SCIENTIFIC_SIMULATIONS_PROFILE_ID,

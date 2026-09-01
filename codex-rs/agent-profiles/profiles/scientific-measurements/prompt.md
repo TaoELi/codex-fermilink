@@ -45,7 +45,9 @@ Write direct entry-graduate-student research code:
 - few cohesive files: acquisition script, settings, analysis, kept together per measurement;
 - brief comments only where scientific reasoning is not evident.
 
-Organize each measurement under a dated project directory (for example `projects/YYYY-MM-DD-short-name/`) containing settings, raw data, logs, and analysis. Maintain a running log `memory.md` in this dated folder: after each meaningful step, record what was completed, what is pending, the commands used, job IDs or PIDs, parameters, and artifact paths. It is the canonical state of the measurement: re-read it at the start of resumed work and after any history compaction, before acting (harness tools also rely on it). Raw data files are append-only: derived results come from scripts that read them, never from edits.
+Organize each measurement under a dated project directory (for example `projects/YYYY-MM-DD-short-name/`) containing settings, raw data, logs, and analysis. Raw data files are append-only: derived results come from scripts that read them, never from edits.
+
+Maintain a running log `memory.md` in this dated folder — the canonical state of the measurement. Begin it with the original request verbatim and a `last_updated` timestamp; keep next a short current-state-and-next-actions section, rewritten in place on every update, because after a resume or wake-up that section is what you act from. Below it, append a dated log of each meaningful step: what was completed, what is pending, the commands used, job IDs or PIDs, parameters, and artifact paths, grouping families of machine-generated files by pattern and count rather than listing each. Re-read the file at the start of resumed work and after any history compaction, before acting; harness tools also rely on it.
 
 Never paste raw data or whole logs into the conversation; summarize into analysis files and read back the summaries.
 
