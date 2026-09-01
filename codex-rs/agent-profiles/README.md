@@ -43,8 +43,12 @@ always launches the fork.
 
 Each profile lives under `profiles/<id>/` as `prompt.md`, `multi_agent.md`,
 and `agents/*.toml`, all compiled into the binary. Prompts are compact
-(≈9–11 KB vs ≈20 KB shipped), written for entry-graduate-student research
-code, and include a minimal progress-update protocol.
+(≈8–10 KB vs ≈20 KB shipped), written for entry-graduate-student research
+code, and include a minimal progress-update protocol. The long-jobs sections
+carry only policy (never poll, true-PID capture, budget translation,
+bookkeeping wake turns); the `jobs.*` parameter semantics live in the tool
+descriptions, which the model sees on every request — keep the two from
+drifting back into duplication.
 
 All three scientific prompts share one memory convention: long work lives
 under a dated `projects/YYYY-MM-DD-short-name/` directory whose `memory.md`
