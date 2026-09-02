@@ -171,7 +171,10 @@ pub struct JobsToml {
     /// context has grown large. Long jobs outlive the provider prompt cache,
     /// so wake turns on a big history are billed at full input price; the
     /// summary plus the durable `memory.md` keep the wake turn cheap.
-    /// Defaults to true.
+    /// Unset, the agent profile decides: on for the simulation and
+    /// measurement profiles, whose results need fresh analysis after hours
+    /// of waiting; off for the algorithm profile, whose benchmark wakes need
+    /// the raw development history more than the saving.
     pub compact_before_wake: Option<bool>,
 }
 

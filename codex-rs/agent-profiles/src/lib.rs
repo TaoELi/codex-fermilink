@@ -53,6 +53,15 @@ pub struct AgentProfile {
     pub multi_agent_guidance: Option<&'static str>,
     /// Extra tooling this profile enables.
     pub capabilities: &'static [ProfileCapability],
+    /// Whether the session job watcher compacts a large history before
+    /// waking this profile's idle agent; `jobs.compact_before_wake` in the
+    /// user config overrides it. Simulation and measurement campaigns wait
+    /// hours to days on jobs whose results need fresh analysis, so the
+    /// summary plus the durable `memory.md` is the better starting point.
+    /// Algorithm development waits minutes on benchmarks whose numbers feed
+    /// the next code iteration, so the raw history — what was tried, why it
+    /// failed, the current code — is worth more than the saving.
+    pub compact_before_wake: bool,
 }
 
 /// Extra tooling a profile can enable beyond prompts and roles.
@@ -215,6 +224,7 @@ pub const BUILT_IN_AGENT_PROFILES: &[AgentProfile] = &[
         roles: &[],
         multi_agent_guidance: None,
         capabilities: &[],
+        compact_before_wake: true,
     },
     AgentProfile {
         id: SCIENTIFIC_ALGORITHM_PROFILE_ID,
@@ -224,6 +234,7 @@ pub const BUILT_IN_AGENT_PROFILES: &[AgentProfile] = &[
         roles: SCIENTIFIC_ALGORITHM_ROLES,
         multi_agent_guidance: Some(SCIENTIFIC_ALGORITHM_MULTI_AGENT_GUIDANCE),
         capabilities: &[ProfileCapability::JobMonitor],
+        compact_before_wake: false,
     },
     AgentProfile {
         id: SCIENTIFIC_SIMULATIONS_PROFILE_ID,
@@ -233,6 +244,7 @@ pub const BUILT_IN_AGENT_PROFILES: &[AgentProfile] = &[
         roles: SCIENTIFIC_SIMULATIONS_ROLES,
         multi_agent_guidance: Some(SCIENTIFIC_SIMULATIONS_MULTI_AGENT_GUIDANCE),
         capabilities: &[ProfileCapability::JobMonitor],
+        compact_before_wake: true,
     },
     AgentProfile {
         id: SCIENTIFIC_MEASUREMENTS_PROFILE_ID,
@@ -242,6 +254,7 @@ pub const BUILT_IN_AGENT_PROFILES: &[AgentProfile] = &[
         roles: SCIENTIFIC_MEASUREMENTS_ROLES,
         multi_agent_guidance: Some(SCIENTIFIC_MEASUREMENTS_MULTI_AGENT_GUIDANCE),
         capabilities: &[ProfileCapability::JobMonitor],
+        compact_before_wake: true,
     },
 ];
 

@@ -4671,3 +4671,53 @@ prefix_rules = []
         Ok(())
     }
 }
+
+#[tokio::test]
+async fn compact_before_wake_follows_the_profile_unless_configured() -> std::io::Result<()> {
+    for profile in codex_agent_profiles::BUILT_IN_AGENT_PROFILES {
+        let tmp = tempdir()?;
+        let codex_home = tmp.path().join("home");
+        tokio::fs::create_dir_all(&codex_home).await?;
+        tokio::fs::write(
+            codex_home.join(CONFIG_TOML_FILE),
+            format!("agent_profile = \"{}\"", profile.id),
+        )
+        .await?;
+
+        let config = ConfigBuilder::without_managed_config_for_tests()
+            .codex_home(codex_home)
+            .build()
+            .await?;
+
+        assert_eq!(
+            config.jobs_compact_before_wake, profile.compact_before_wake,
+            "profile `{}` must supply the compact-before-wake default",
+            profile.id
+        );
+
+        // An explicit setting overrides the profile in either direction.
+        let tmp = tempdir()?;
+        let codex_home = tmp.path().join("home");
+        tokio::fs::create_dir_all(&codex_home).await?;
+        tokio::fs::write(
+            codex_home.join(CONFIG_TOML_FILE),
+            format!(
+                "agent_profile = \"{}\"\n[jobs]\ncompact_before_wake = {}",
+                profile.id, !profile.compact_before_wake
+            ),
+        )
+        .await?;
+
+        let config = ConfigBuilder::without_managed_config_for_tests()
+            .codex_home(codex_home)
+            .build()
+            .await?;
+
+        assert_eq!(
+            config.jobs_compact_before_wake, !profile.compact_before_wake,
+            "profile `{}` must yield to an explicit jobs.compact_before_wake",
+            profile.id
+        );
+    }
+    Ok(())
+}

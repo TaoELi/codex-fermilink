@@ -168,14 +168,21 @@ the FermiLink harness):
   the normal shell, so sandbox and approval machinery apply to the
   submission; a wrapper's PID is not the job.
 - `jobs.job_await` — park the turn while deterministic code polls `sacct`
-  (falling back to `squeue`) or process liveness with adaptive backoff
-  (15 s → 5 min), tailing logs for suspicious lines (NaN, divergence, OOM,
-  crashes, plus the job's watch patterns). Returns on a terminal state
-  (batch jobs: first failure or the whole sweep done), a suspicious log
-  event, an expected-runtime overrun, repeated UNKNOWN scheduler answers,
-  new user input, or a per-call wait budget (default 30 min, max 12 h) —
-  the agent burns no turns while waiting and simply calls `job_await` again
-  after a budget return.
+  (falling back to `squeue --states=all`, which still lists jobs that
+  finished within `MinJobAge`) or process liveness with adaptive backoff
+  (15 s → 5 min, reset to 15 s after every state change), tailing logs for
+  suspicious lines (NaN, divergence, OOM, crashes, plus the job's watch
+  patterns). Returns on a terminal state (batch jobs: first failure or the
+  whole sweep done), a suspicious log event, an expected-runtime overrun,
+  repeated UNKNOWN scheduler answers (controller unreachable or timing out),
+  new user input or an incoming agent message, or a per-call wait budget
+  (default 30 min, max 12 h) — the agent burns no turns while waiting and
+  simply calls `job_await` again after a budget return. Where accounting is
+  disabled (`sacct` fails, as on a single-node workstation) a finished job
+  vanishes from the scheduler after `MinJobAge`: a vanished job the record
+  saw running is reported as terminal `EXITED` (the log must tell success
+  from failure, as for a dead PID); one never seen active is `NOT_FOUND`
+  (wrong ID, or ended and aged out before attach), so nothing waits on it.
 - `jobs.job_status` — instant snapshot of state history, runtime vs.
   expectation, and bounded log tails; the reattachment point after a
   session restart.
@@ -196,15 +203,21 @@ deterministic engine and wakes the idle agent by injecting a bounded
 job reaches a terminal state (batch jobs: first failure, or the whole sweep
 terminal), new suspicious or watched log lines appear, or a job overruns its
 expected runtime. Each outcome wakes at most once (`notified_at`,
-`suspicious_signature`, and `overrun_notified` on the job record; an await
-or attach that already reported the outcome also counts), interrupted
+`suspicious_signature`, and `overrun_notified` on the job record; an attach,
+status, or await reply that already showed the outcome also counts), interrupted
 sessions are never auto-resumed, and `jobs.max_auto_continues` bounds
 runaway loops. A session that starts with tracked jobs (a resume) opens with
 a one-line `[jobs] N tracked job(s)…` briefing. Because long jobs outlive
 the provider prompt cache, a wake on a large history (≥50k tokens in the
-last request) first compacts the conversation — the wake turn then starts
+last request) may first compact the conversation — the wake turn then starts
 from the summary plus the durable `memory.md`, at a fraction of the cost;
 every compaction failure mode degrades to waking on the full history.
+Whether it does is the profile's choice (`compact_before_wake` on the
+profile definition) unless `jobs.compact_before_wake` is set: on for the
+simulation and measurement profiles, whose results need fresh analysis after
+hours of waiting; off for the algorithm profile, whose benchmark wakes come
+every few minutes and need the raw development history — what was tried, why
+it failed, the current code — more than the saving.
 Configuration:
 
 ```toml
@@ -213,7 +226,7 @@ auto_continue = true        # default; set false to disable the watcher
 check_in_seconds = 21600    # optional periodic "still running" wake-ups
 max_auto_continues = 50     # default cap on automatic wake-ups per session
 watch_patterns = ["not converged"]  # optional user-level log regexes
-compact_before_wake = true  # default; compact large histories before waking
+compact_before_wake = true  # optional; overrides the profile default (see above)
 ```
 
 ## Adding a profile

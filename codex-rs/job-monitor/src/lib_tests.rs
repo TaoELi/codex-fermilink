@@ -59,3 +59,66 @@ async fn snapshot_of_dead_pid_is_terminal_and_persisted() -> std::io::Result<()>
     assert_eq!(reloaded.latest_state(), Some(&snapshot.state));
     Ok(())
 }
+
+#[test]
+fn vanished_job_seen_running_has_exited() {
+    let mut record = JobRecord::new(
+        JobTarget::Slurm {
+            job_id: "3044".to_string(),
+        },
+        None,
+        Vec::new(),
+    );
+    record.observe(JobState::active("RUNNING"));
+    let state = resolve_slurm_probe(SlurmProbe::NotFound, &record);
+    assert_eq!(
+        (state.token.as_str(), state.phase, state.detail.is_some()),
+        ("EXITED", JobPhase::Completed, true)
+    );
+    assert!(state.is_terminal());
+}
+
+#[test]
+fn vanished_job_never_seen_active_is_not_found() {
+    let mut record = JobRecord::new(
+        JobTarget::Slurm {
+            job_id: "3043".to_string(),
+        },
+        None,
+        Vec::new(),
+    );
+    let fresh = resolve_slurm_probe(SlurmProbe::NotFound, &record);
+    assert_eq!(
+        (fresh.token.as_str(), fresh.phase),
+        ("NOT_FOUND", JobPhase::Failed)
+    );
+    assert!(fresh.is_terminal());
+
+    // An earlier UNKNOWN (scheduler unreachable) is not evidence the job ran.
+    record.observe(JobState::unknown());
+    let after_unknown = resolve_slurm_probe(SlurmProbe::NotFound, &record);
+    assert_eq!(after_unknown.token, "NOT_FOUND");
+}
+
+#[test]
+fn scheduler_answers_pass_through_resolution() {
+    let record = JobRecord::new(
+        JobTarget::Slurm {
+            job_id: "77".to_string(),
+        },
+        None,
+        Vec::new(),
+    );
+    assert_eq!(
+        resolve_slurm_probe(SlurmProbe::State(JobState::active("PENDING")), &record),
+        JobState::active("PENDING")
+    );
+    assert_eq!(
+        resolve_slurm_probe(SlurmProbe::State(JobState::failed("TIMEOUT")), &record),
+        JobState::failed("TIMEOUT")
+    );
+    assert_eq!(
+        resolve_slurm_probe(SlurmProbe::Unavailable, &record),
+        JobState::unknown()
+    );
+}

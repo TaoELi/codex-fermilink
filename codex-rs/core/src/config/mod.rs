@@ -694,7 +694,8 @@ pub struct Config {
     /// User-level extra log-watch regexes merged into every job attach.
     pub jobs_watch_patterns: Vec<String>,
 
-    /// Compact large histories before automatic job-watcher wake-ups.
+    /// Compact large histories before automatic job-watcher wake-ups: the
+    /// agent profile's default unless `jobs.compact_before_wake` is set.
     pub jobs_compact_before_wake: bool,
 
     /// Developer instructions override injected as a separate message.
@@ -4208,7 +4209,7 @@ impl Config {
                 .jobs
                 .as_ref()
                 .and_then(|jobs| jobs.compact_before_wake)
-                .unwrap_or(true),
+                .unwrap_or(agent_profile.compact_before_wake),
             personality,
             developer_instructions,
             compact_prompt,

@@ -9,6 +9,7 @@
 //! restarts. Enabled by agent profiles with the `JobMonitor` capability.
 
 use crate::function_tool::FunctionCallError;
+use crate::session::InputQueueActivity;
 use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
@@ -154,6 +155,30 @@ fn format_snapshot(snapshot: &JobSnapshot) -> String {
         );
     }
     text
+}
+
+/// Persists that this snapshot's outcome has been shown to the agent, so the
+/// session job watcher never wakes it again for the same terminal state,
+/// suspicious lines, or overrun. Every tool reply that renders a snapshot is
+/// a notification: attach, status, and await alike.
+async fn mark_reported(store: &Path, snapshot: &JobSnapshot) {
+    let overrun = snapshot.unreported_overrun().is_some();
+    if !snapshot.state.is_terminal() && !snapshot.has_suspicious_logs() && !overrun {
+        return;
+    }
+    let mut record = snapshot.record.clone();
+    if snapshot.state.is_terminal() {
+        record.notified_at = Some(chrono::Utc::now());
+    }
+    if snapshot.has_suspicious_logs() {
+        record.suspicious_signature = Some(crate::job_watcher::suspicious_signature(snapshot));
+    }
+    if overrun {
+        record.overrun_notified = true;
+    }
+    if let Err(err) = record.save(store).await {
+        tracing::warn!(%err, "failed to persist job notification state");
+    }
 }
 
 pub struct JobAttachHandler;
@@ -346,15 +371,11 @@ impl ToolExecutor<ToolInvocation> for JobAttachHandler {
                 })?;
                 if snapshot.state.is_terminal() {
                     any_terminal = true;
-                    // The attach reply is the notification: keep the session
-                    // job watcher from waking the agent again for this dead
-                    // job.
-                    let mut record = snapshot.record.clone();
-                    record.notified_at = Some(chrono::Utc::now());
-                    if let Err(err) = record.save(&store).await {
-                        tracing::warn!(%err, "failed to persist attach-time notification state");
-                    }
                 }
+                // The attach reply is the notification for whatever it shows:
+                // a job that is already dead, or suspicious lines already in
+                // its log, must not wake the agent again once it goes idle.
+                mark_reported(&store, &snapshot).await;
                 let _ = writeln!(text, "Attached {}.", snapshot.record.target.display());
                 text.push_str(&format_snapshot(&snapshot));
             }
@@ -464,6 +485,7 @@ impl ToolExecutor<ToolInvocation> for JobStatusHandler {
                         "failed to persist job record: {err}"
                     ))
                 })?;
+                mark_reported(&store, &snapshot).await;
                 text.push_str(&format_snapshot(&snapshot));
                 text.push('\n');
             }
@@ -614,7 +636,9 @@ impl ToolExecutor<ToolInvocation> for JobAwaitHandler {
             let started = Instant::now();
             let mut poll_interval = INITIAL_POLL_INTERVAL;
             let mut consecutive_unknown: u32 = 0;
-            let mut interrupted = pending_activity.is_some();
+            // `Some` once the wait was cut short, carrying what arrived so the
+            // reply can say whether it was the user or an agent message.
+            let mut interrupted_by: Option<InputQueueActivity> = pending_activity;
             let mut stop_reason: Option<String> = None;
             let mut snapshots: Vec<JobSnapshot>;
             let mut last_state_tokens: BTreeMap<String, String> = records
@@ -649,7 +673,12 @@ impl ToolExecutor<ToolInvocation> for JobAwaitHandler {
                 }
 
                 // Surface state transitions (e.g. PENDING -> RUNNING) live,
-                // so long waits stay legible in the UI.
+                // so long waits stay legible in the UI, and poll quickly
+                // again after one: the moments right after a change are when
+                // the next one is most likely (a crash just after start, a
+                // scheduler outage clearing), and a backed-off interval would
+                // otherwise confirm it minutes late.
+                let mut transitioned = false;
                 for snapshot in &snapshots {
                     let target = snapshot.record.target.display();
                     let token = snapshot.state.token.clone();
@@ -658,6 +687,7 @@ impl ToolExecutor<ToolInvocation> for JobAwaitHandler {
                         .as_deref()
                         .is_some_and(|previous| previous != token)
                     {
+                        transitioned = true;
                         session
                             .send_event(
                                 turn.as_ref(),
@@ -671,6 +701,9 @@ impl ToolExecutor<ToolInvocation> for JobAwaitHandler {
                             )
                             .await;
                     }
+                }
+                if transitioned {
+                    poll_interval = INITIAL_POLL_INTERVAL;
                 }
 
                 // Batch (sweep) awaits return early only for failures or
@@ -727,11 +760,11 @@ impl ToolExecutor<ToolInvocation> for JobAwaitHandler {
                     ));
                 } else if consecutive_unknown >= UNKNOWN_CONSECUTIVE_LIMIT {
                     stop_reason = Some(format!(
-                        "scheduler state unknown {consecutive_unknown} polls in a row; check sacct/squeue availability and the job ID"
+                        "no usable scheduler answer {consecutive_unknown} polls in a row (sacct/squeue failing or timing out); check the scheduler, then job_await again"
                     ));
                 }
 
-                if interrupted || stop_reason.is_some() {
+                if interrupted_by.is_some() || stop_reason.is_some() {
                     break;
                 }
                 let elapsed = started.elapsed();
@@ -756,7 +789,7 @@ impl ToolExecutor<ToolInvocation> for JobAwaitHandler {
                     }
                     result = activity_rx.changed() => {
                         if result.is_ok() {
-                            interrupted = true;
+                            interrupted_by = Some(*activity_rx.borrow_and_update());
                         }
                     }
                 }
@@ -768,34 +801,19 @@ impl ToolExecutor<ToolInvocation> for JobAwaitHandler {
                 .await;
 
             // The await's own return is the notification for anything
-            // terminal, suspicious, or overdue it observed; keep the session
-            // job watcher from waking the agent again for the same outcome.
+            // terminal, suspicious, or overdue it observed.
             for snapshot in &snapshots {
-                let overrun = snapshot.unreported_overrun().is_some();
-                if !snapshot.state.is_terminal() && !snapshot.has_suspicious_logs() && !overrun {
-                    continue;
-                }
-                let mut record = snapshot.record.clone();
-                if snapshot.state.is_terminal() {
-                    record.notified_at = Some(chrono::Utc::now());
-                }
-                if snapshot.has_suspicious_logs() {
-                    record.suspicious_signature =
-                        Some(crate::job_watcher::suspicious_signature(snapshot));
-                }
-                if overrun {
-                    record.overrun_notified = true;
-                }
-                if let Err(err) = record.save(&store).await {
-                    tracing::warn!(%err, "failed to persist await notification state");
-                }
+                mark_reported(&store, snapshot).await;
             }
 
             let mut text = String::new();
-            let reason = if interrupted {
-                "Wait interrupted by new input.".to_string()
-            } else {
-                stop_reason.unwrap_or_else(|| "wait ended".to_string())
+            let reason = match interrupted_by {
+                Some(InputQueueActivity::Steer) => "Wait interrupted by new user input.".to_string(),
+                Some(InputQueueActivity::Mailbox) => {
+                    "Wait interrupted by an incoming agent message; the jobs keep running — handle the message, then job_await again."
+                        .to_string()
+                }
+                None => stop_reason.unwrap_or_else(|| "wait ended".to_string()),
             };
             let _ = writeln!(
                 text,

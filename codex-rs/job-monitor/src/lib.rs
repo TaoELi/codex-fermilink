@@ -14,8 +14,9 @@ mod record;
 mod state;
 mod tail;
 
+pub use probe::SlurmProbe;
 pub use probe::pid_alive;
-pub use probe::query_slurm_state;
+pub use probe::probe_slurm;
 pub use record::JobRecord;
 pub use record::JobTarget;
 pub use record::StateObservation;
@@ -84,12 +85,13 @@ pub fn parse_expected_runtime(spec: &str) -> Result<u64, String> {
         .ok_or_else(|| format!("expected_runtime `{spec}` must be a positive duration"))
 }
 
-/// Probes one target's current state. PID targets report `RUNNING` while
-/// alive and a terminal `EXITED` once gone (a dead PID cannot distinguish
-/// success from failure; the logs must tell the rest).
-pub async fn probe_target(target: &JobTarget) -> JobState {
-    match target {
-        JobTarget::Slurm { job_id } => query_slurm_state(job_id).await,
+/// Probes one record's target. PID targets report `RUNNING` while alive and
+/// a terminal `EXITED` once gone (a dead PID cannot distinguish success from
+/// failure; the logs must tell the rest). SLURM answers are resolved against
+/// the record's history by [`resolve_slurm_probe`].
+pub async fn probe_target(record: &JobRecord) -> JobState {
+    match &record.target {
+        JobTarget::Slurm { job_id } => resolve_slurm_probe(probe_slurm(job_id).await, record),
         JobTarget::Pid { pid } => {
             if pid_alive(*pid) {
                 JobState::active("RUNNING")
@@ -101,6 +103,47 @@ pub async fn probe_target(target: &JobTarget) -> JobState {
                 }
             }
         }
+    }
+}
+
+/// Turns a scheduler answer into the job's state.
+///
+/// A job the controller has forgotten after this record saw it queued or
+/// running has finished: without accounting its exit status is gone, so —
+/// like a dead PID — it completes as `EXITED` and the logs must tell success
+/// from failure. One never seen active is `NOT_FOUND`: a wrong ID, or work
+/// that ended and aged out before it was attached. Either way there is
+/// nothing left to wait for, so both are terminal rather than an `UNKNOWN`
+/// that would be re-polled until the wait budget runs out.
+pub fn resolve_slurm_probe(probe: SlurmProbe, record: &JobRecord) -> JobState {
+    match probe {
+        SlurmProbe::State(state) => state,
+        SlurmProbe::NotFound => {
+            let seen_active = record
+                .history
+                .iter()
+                .any(|observation| matches!(observation.state.phase, JobPhase::Active));
+            if seen_active {
+                JobState {
+                    token: "EXITED".to_string(),
+                    phase: JobPhase::Completed,
+                    detail: Some(
+                        "gone from the scheduler with no accounting record; the log must tell success from failure"
+                            .to_string(),
+                    ),
+                }
+            } else {
+                JobState {
+                    token: "NOT_FOUND".to_string(),
+                    phase: JobPhase::Failed,
+                    detail: Some(
+                        "the scheduler has no record of this job ID: wrong ID, or it ended and aged out before attach"
+                            .to_string(),
+                    ),
+                }
+            }
+        }
+        SlurmProbe::Unavailable => JobState::unknown(),
     }
 }
 
@@ -134,7 +177,7 @@ impl JobSnapshot {
 /// Probes a target, updates and persists its record, and gathers log tails
 /// scanned with the record's extra watch patterns.
 pub async fn snapshot_job(store_dir: &Path, mut record: JobRecord) -> std::io::Result<JobSnapshot> {
-    let state = probe_target(&record.target).await;
+    let state = probe_target(&record).await;
     record.observe(state.clone());
     record.save(store_dir).await?;
     let extra_patterns = compile_watch_patterns(&record.watch_patterns);
