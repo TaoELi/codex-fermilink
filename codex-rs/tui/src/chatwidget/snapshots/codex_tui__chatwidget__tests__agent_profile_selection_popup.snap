@@ -8,7 +8,7 @@ expression: popup
 › 1. Default Codex (current)  Shipped Codex instructions and software-
                               engineering workflow
   2. Scientific Algorithm     Hypothesis-driven search for correct, lower-
-                              scaling scientific algorithms
+                              scaling algorithms and long-benchmark monitoring
   3. Scientific Simulations   HPC simulation setup, convergence, long-job
                               monitoring, and validation
   4. Scientific Measurements  Calibration, uncertainty, provenance, and long-
