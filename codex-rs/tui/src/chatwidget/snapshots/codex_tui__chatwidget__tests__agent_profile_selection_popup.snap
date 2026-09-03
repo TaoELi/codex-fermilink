@@ -5,13 +5,16 @@ expression: popup
   Select Agent Profile
   Sets the base instructions for new threads; changing profile starts a new ch
 
-› 1. Default Codex (current)  Shipped Codex instructions and software-
-                              engineering workflow
-  2. Scientific Algorithm     Hypothesis-driven search for correct, lower-
-                              scaling algorithms and long-benchmark monitoring
-  3. Scientific Simulations   HPC simulation setup, convergence, long-job
-                              monitoring, and validation
-  4. Scientific Measurements  Calibration, uncertainty, provenance, and long-
-                              acquisition monitoring
+› 1. Default Codex (current)            Shipped Codex instructions and
+                                        software-engineering workflow
+  2. FermiLink Scientific Brainstorms   Start a panel of subagents for
+                                        discussing impactful research
+                                        directions
+  3. FermiLink Scientific Algorithm     Hypothesis-driven search for correct,
+                                        lower-scaling computational algorithms
+  4. FermiLink Scientific Simulations   For long-duration HPC simulation
+                                        workflows
+  5. FermiLink Scientific Measurements  For experimental measurements with
+                                        long-acquisition monitoring
 
   Press enter to confirm or esc to go back

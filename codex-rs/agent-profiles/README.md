@@ -37,6 +37,7 @@ always launches the fork.
 | Profile | Behavior |
 | --- | --- |
 | `default` | Shipped Codex instructions, byte-for-byte upstream behavior. |
+| `scientific-brainstorms` | Research-direction panel prompt: the main agent referees four to eight subagents modeled on real scientists' public work through blind proposal, critique, and ranking rounds, then writes `strategy.md`; four panel roles; no job monitoring. |
 | `scientific-algorithm` | Hypothesis-first algorithm research prompt; five research subagent roles; job monitoring for long benchmarks. |
 | `scientific-simulations` | HPC simulation setup, convergence, checkpointing, and validation prompt; five simulation roles; job monitoring. |
 | `scientific-measurements` | Calibration, uncertainty, provenance, and experimental-design prompt; five measurement roles; job monitoring. |
@@ -114,6 +115,7 @@ collisions.
 
 | Profile | Roles (model / effort) |
 | --- | --- |
+| scientific-brainstorms | panelist (sol/high), prior_art_scout (luna/xhigh), devils_advocate (sol/xhigh), panel_rapporteur (terra/high) |
 | scientific-algorithm | algorithm_theorist (sol/max), scaling_analyst (sol/xhigh), numerical_falsifier (sol/max), independent_replicator (luna/xhigh), gpu_implementer (terra/high) |
 | scientific-simulations | model_auditor (sol/xhigh), convergence_analyst (sol/xhigh), result_falsifier (sol/max), independent_replicator (luna/xhigh), simulation_implementer (terra/high) |
 | scientific-measurements | experimental_designer (sol/xhigh), calibration_auditor (sol/xhigh), uncertainty_analyst (sol/max), independent_replicator (luna/xhigh), acquisition_implementer (terra/high) |

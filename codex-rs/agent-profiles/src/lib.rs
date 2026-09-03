@@ -11,6 +11,9 @@
 /// Identifier of the built-in profile that keeps the shipped Codex behavior.
 pub const DEFAULT_AGENT_PROFILE_ID: &str = "default";
 
+/// Identifier of the scientific brainstorms (research-direction panel) profile.
+pub const SCIENTIFIC_BRAINSTORMS_PROFILE_ID: &str = "scientific-brainstorms";
+
 /// Identifier of the scientific algorithm research profile.
 pub const SCIENTIFIC_ALGORITHM_PROFILE_ID: &str = "scientific-algorithm";
 
@@ -19,6 +22,11 @@ pub const SCIENTIFIC_SIMULATIONS_PROFILE_ID: &str = "scientific-simulations";
 
 /// Identifier of the scientific measurements profile.
 pub const SCIENTIFIC_MEASUREMENTS_PROFILE_ID: &str = "scientific-measurements";
+
+const SCIENTIFIC_BRAINSTORMS_PROMPT: &str =
+    include_str!("../profiles/scientific-brainstorms/prompt.md");
+const SCIENTIFIC_BRAINSTORMS_MULTI_AGENT_GUIDANCE: &str =
+    include_str!("../profiles/scientific-brainstorms/multi_agent.md");
 
 const SCIENTIFIC_ALGORITHM_PROMPT: &str =
     include_str!("../profiles/scientific-algorithm/prompt.md");
@@ -84,6 +92,39 @@ pub struct AgentProfileRole {
     pub config_path: &'static str,
     pub config_contents: &'static str,
 }
+
+const SCIENTIFIC_BRAINSTORMS_ROLES: &[AgentProfileRole] = &[
+    AgentProfileRole {
+        name: "panelist",
+        description: "Panelist modeled on one real scientist's public research perspective; builds a sourced dossier, then proposes, critiques, and ranks research directions in a fixed template.",
+        config_path: "agent_profile/scientific-brainstorms/panelist.toml",
+        config_contents: include_str!("../profiles/scientific-brainstorms/agents/panelist.toml"),
+    },
+    AgentProfileRole {
+        name: "prior_art_scout",
+        description: "Literature scout that checks surviving directions against prior work and returns closest matches with a published/variant/open verdict.",
+        config_path: "agent_profile/scientific-brainstorms/prior_art_scout.toml",
+        config_contents: include_str!(
+            "../profiles/scientific-brainstorms/agents/prior_art_scout.toml"
+        ),
+    },
+    AgentProfileRole {
+        name: "devils_advocate",
+        description: "Adversarial critic that attacks the panel's leading directions and the chair's summary for hidden assumptions, groupthink, and inconclusive first experiments.",
+        config_path: "agent_profile/scientific-brainstorms/devils_advocate.toml",
+        config_contents: include_str!(
+            "../profiles/scientific-brainstorms/agents/devils_advocate.toml"
+        ),
+    },
+    AgentProfileRole {
+        name: "panel_rapporteur",
+        description: "Rapporteur that clusters and anonymizes a round's proposals into a neutral summary, preserving dissenting directions.",
+        config_path: "agent_profile/scientific-brainstorms/panel_rapporteur.toml",
+        config_contents: include_str!(
+            "../profiles/scientific-brainstorms/agents/panel_rapporteur.toml"
+        ),
+    },
+];
 
 const SCIENTIFIC_ALGORITHM_ROLES: &[AgentProfileRole] = &[
     AgentProfileRole {
@@ -227,9 +268,19 @@ pub const BUILT_IN_AGENT_PROFILES: &[AgentProfile] = &[
         compact_before_wake: true,
     },
     AgentProfile {
+        id: SCIENTIFIC_BRAINSTORMS_PROFILE_ID,
+        display_name: "FermiLink Scientific Brainstorms",
+        description: "Start a panel of subagents for discussing impactful research directions",
+        base_instructions: Some(SCIENTIFIC_BRAINSTORMS_PROMPT),
+        roles: SCIENTIFIC_BRAINSTORMS_ROLES,
+        multi_agent_guidance: Some(SCIENTIFIC_BRAINSTORMS_MULTI_AGENT_GUIDANCE),
+        capabilities: &[],
+        compact_before_wake: true,
+    },
+    AgentProfile {
         id: SCIENTIFIC_ALGORITHM_PROFILE_ID,
-        display_name: "Scientific Algorithm",
-        description: "Hypothesis-driven search for correct, lower-scaling algorithms and long-benchmark monitoring",
+        display_name: "FermiLink Scientific Algorithm",
+        description: "Hypothesis-driven search for correct, lower-scaling computational algorithms",
         base_instructions: Some(SCIENTIFIC_ALGORITHM_PROMPT),
         roles: SCIENTIFIC_ALGORITHM_ROLES,
         multi_agent_guidance: Some(SCIENTIFIC_ALGORITHM_MULTI_AGENT_GUIDANCE),
@@ -238,8 +289,8 @@ pub const BUILT_IN_AGENT_PROFILES: &[AgentProfile] = &[
     },
     AgentProfile {
         id: SCIENTIFIC_SIMULATIONS_PROFILE_ID,
-        display_name: "Scientific Simulations",
-        description: "HPC simulation setup, convergence, long-job monitoring, and validation",
+        display_name: "FermiLink Scientific Simulations",
+        description: "For long-duration HPC simulation workflows",
         base_instructions: Some(SCIENTIFIC_SIMULATIONS_PROMPT),
         roles: SCIENTIFIC_SIMULATIONS_ROLES,
         multi_agent_guidance: Some(SCIENTIFIC_SIMULATIONS_MULTI_AGENT_GUIDANCE),
@@ -248,8 +299,8 @@ pub const BUILT_IN_AGENT_PROFILES: &[AgentProfile] = &[
     },
     AgentProfile {
         id: SCIENTIFIC_MEASUREMENTS_PROFILE_ID,
-        display_name: "Scientific Measurements",
-        description: "Calibration, uncertainty, provenance, and long-acquisition monitoring",
+        display_name: "FermiLink Scientific Measurements",
+        description: "For experimental measurements with long-acquisition monitoring",
         base_instructions: Some(SCIENTIFIC_MEASUREMENTS_PROMPT),
         roles: SCIENTIFIC_MEASUREMENTS_ROLES,
         multi_agent_guidance: Some(SCIENTIFIC_MEASUREMENTS_MULTI_AGENT_GUIDANCE),

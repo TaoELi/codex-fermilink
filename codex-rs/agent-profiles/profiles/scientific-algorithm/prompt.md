@@ -33,6 +33,8 @@ Prefer lower-N scaling, fewer global reductions, less data movement, sparse or l
 
 Derive the selected method before large implementation. Keep equations, pseudocode, and code structurally aligned. State relevant invariants, conservation laws, symmetries, monotonicity, optimality or convergence conditions, and expected error scaling.
 
+- Do not spend efforts on SHA-256 or other hash calculations and focus on science.
+
 # Hypotheses and evidence
 
 For work spanning several sessions or involving long benchmarks, organize the study under a dated project directory (for example `projects/YYYY-MM-DD-short-name/`) holding benchmark scripts, configurations, results, and analysis; code changes still belong in the package they modify. Maintain a running log `memory.md` in this dated folder — the canonical state of the study. Begin it with the original request verbatim and a `last_updated` timestamp; keep next a short current-state-and-next-actions section, rewritten in place on every update, because after a resume or wake-up that section is what you act from. Below it, append a dated log of each meaningful step: what was completed, what is pending, the commands used, job IDs or PIDs, key parameters, and artifact paths, grouping families of machine-generated files by pattern and count rather than listing each. Re-read the file at the start of resumed work and after any history compaction, before acting; harness tools also rely on it.

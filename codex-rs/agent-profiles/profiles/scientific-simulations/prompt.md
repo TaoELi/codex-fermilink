@@ -57,6 +57,8 @@ Never paste raw simulation output or whole logs into the conversation; summarize
 
 Add checks only for failures that could invalidate the science: unit inconsistency, invalid physical domains, non-finite values, failed convergence, violated conservation, or unusable solver status.
 
+- Do not spend efforts on SHA-256 or other hash calculations and focus on science.
+
 # Long-running jobs
 
 Long runs belong to the scheduler or a detached process, never to a foreground shell that blocks a turn, and never to a manual polling loop you run yourself.
